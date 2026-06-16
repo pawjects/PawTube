@@ -1,10 +1,10 @@
 # 🐾 PawTube
 
-[![HTML5](https://img.shields.io/badge/html5-%23E34F26.svg?style=flat-square&logo=html5&logoColor=white)](https://pawtube.vercel.app/)
-[![CSS3](https://img.shields.io/badge/css3-%231572B6.svg?style=flat-square&logo=css3&logoColor=white)](https://pawtube.vercel.app/)
-[![JavaScript](https://img.shields.io/badge/javascript-%23323330.svg?style=flat-square&logo=javascript&logoColor=%23F7DF1E)](https://pawtube.vercel.app/)
+[![HTML5](https://img.shields.io/badge/html5-%23E34F26.svg?style=flat-square&logo=html5&logoColor=white)](https://pawtube.localplayer.dev/)
+[![CSS3](https://img.shields.io/badge/css3-%231572B6.svg?style=flat-square&logo=css3&logoColor=white)](https://pawtube.localplayer.dev/)
+[![JavaScript](https://img.shields.io/badge/javascript-%23323330.svg?style=flat-square&logo=javascript&logoColor=%23F7DF1E)](https://pawtube.localplayer.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Vercel](https://img.shields.io/badge/hosted%20on-Vercel-black?style=flat-square&logo=vercel)](https://pawtube.vercel.app/)
+[![Vercel](https://img.shields.io/badge/hosted%20on-Vercel-black?style=flat-square&logo=vercel)](https://pawtube.localplayer.dev/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram%20Bot-PawTubeRobot-2CA5E0?style=flat-square&logo=telegram)](https://t.me/PawTubeRobot)
 
 > **PawTube** is a minimalist, distraction-free, and privacy-enhanced YouTube video player.  
@@ -14,7 +14,7 @@
 
 ## 🌐 Live App
 
-**[▶ pawtube.vercel.app](https://pawtube.vercel.app/)**
+**[▶ https://pawtube.localplayer.dev/](https://pawtube.localplayer.dev/)**
 
 ---
 
@@ -26,11 +26,11 @@ Uses YouTube's official **`youtube-nocookie.com`** embed API — no tracking coo
 ### 🔗 Unique Shareable Video URLs
 Every video you load gets its own **unique, shareable URL** — for example:
 ```
-https://pawtube.vercel.app/?v=dQw4w9WgXcW
+https://pawtube.localplayer.dev/?v=dQw4w9WgXcW
 ```
 You can copy and share this link with anyone. They'll land directly on that video inside PawTube, with no YouTube interface, ads, or recommendations in the way. Timestamps are also supported:
 ```
-https://pawtube.vercel.app/?v=dQw4w9WgXcW&t=42
+https://pawtube.localplayer.dev/?v=dQw4w9WgXcW&t=42
 ```
 This makes PawTube perfect for sharing clean, focused viewing experiences.
 
@@ -74,7 +74,7 @@ PawTube is a **100% static, front-end application** — no build steps, no npm, 
 ### Clone & Run Locally
 
 ```bash
-git clone https://github.com/thepawdevs/PawTube.git
+git clone https://github.com/pawjects/PawTube.git
 cd PawTube
 # Open index.html directly in your browser
 ```
@@ -87,24 +87,12 @@ Any modern web browser (Chrome, Firefox, Safari, Edge).
 
 ---
 
-## 📂 Project Structure
-
-```
-PawTube/
-├── index.html    # App structure & layout
-├── style.css     # Material 3 Dark Monet theming & animations
-├── script.js     # Player logic, URL handling & history
-└── LICENSE       # MIT License with YouTube Compliance Addendum
-```
-
----
-
 ## 🔗 How Shareable Links Work
 
 When you paste a YouTube URL or Video ID into PawTube, the browser address bar updates automatically to reflect the video:
 
 ```
-https://pawtube.vercel.app/?v=VIDEO_ID
+https://pawtube.localplayer.dev/?v=VIDEO_ID
 ```
 
 This URL is **fully shareable** — send it to a friend, post it anywhere, or bookmark it. When opened, PawTube loads that video directly without needing any input. Timestamps (`&t=SECONDS`) are also preserved so viewers start exactly where you want them to.
@@ -158,10 +146,9 @@ See [`LICENSE`](LICENSE) for full terms — including important notes on YouTube
 
 PawTube is a project by **PawDevs** — a small indie dev brand building privacy-first, minimal tools.
 
-- 🌐 Website: [PawDevs](https://thepawdevs.github.io/thepawdevs/)
-- 📺 PawTube: [pawtube.vercel.app](https://pawtube.vercel.app/)
+- 🌐 Website: [Pawjects](https://pawjects.github.io/)
+- 📺 PawTube: [pawtube.localplayer.dev/](https://pawtube.localplayer.dev/)
 - 🤖 Telegram Bot: [@PawTubeRobot](https://t.me/PawTubeRobot)
-- 📧 Contact: [skyairpaw@gmail.com](mailto:skyairpaw@gmail.com)
 
 ---
 
