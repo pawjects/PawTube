@@ -2,12 +2,17 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="PawTube - A clean, distraction-free YouTube experience for tech and music" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="description" content="PawTube - A clean, distraction-free YouTube experience" />
+  <meta name="theme-color" content="#0f0f0f" />
   <title>PawTube</title>
+  
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png">
+  
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Google+Sans:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -20,32 +25,48 @@
           <span class="material-symbols-rounded">menu</span>
         </button>
         <a class="logo" href="#/home" data-route="/home">
-          <div class="logo-icon">
-            <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" alt="PawTube Logo">
-          </div>
+          <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" alt="PawTube Logo" class="logo-icon">
           <span class="logo-text">PawTube</span>
         </a>
       </div>
 
-      <div class="header-center">
-        <div class="search-bar">
-          <input type="text" id="header-search" placeholder="Search videos..." autocomplete="off" />
-          <button class="search-btn" id="search-btn" aria-label="Search">
+      <div class="header-center" id="header-center">
+        <button class="icon-btn mobile-search-back" id="mobile-search-back" aria-label="Back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <form class="search-bar" id="search-form" action="javascript:void(0);">
+          <div class="search-input-wrapper">
+            <span class="material-symbols-rounded search-icon-hidden">search</span>
+            <input type="search" id="header-search" placeholder="Search videos or paste link" autocomplete="off" />
+          </div>
+          <button type="submit" class="search-btn" id="search-btn" aria-label="Search">
             <span class="material-symbols-rounded">search</span>
           </button>
-        </div>
+        </form>
+        <button class="icon-btn voice-search-btn" id="voice-btn" aria-label="Search with your voice">
+          <span class="material-symbols-rounded">mic</span>
+        </button>
       </div>
 
       <div class="header-right">
-        <button class="icon-btn about-trigger" id="about-btn" aria-label="About PawTube" title="About">
-          <span class="material-symbols-rounded">info</span>
+        <button class="icon-btn mobile-search-trigger" aria-label="Search">
+          <span class="material-symbols-rounded">search</span>
+        </button>
+        <button class="icon-btn" id="create-btn" aria-label="Create">
+          <span class="material-symbols-rounded">video_call</span>
+        </button>
+        <button class="icon-btn" id="notif-btn" aria-label="Notifications">
+          <span class="material-symbols-rounded">notifications</span>
+        </button>
+        <button class="profile-btn about-trigger" id="about-btn" aria-label="About PawTube">
+          <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" alt="Profile">
         </button>
       </div>
     </header>
 
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
-      <nav class="sidebar-nav" aria-label="Main navigation">
+      <nav class="sidebar-nav">
         <a class="nav-item active" href="#/home" data-route="/home">
           <span class="material-symbols-rounded nav-icon">home</span>
           <span class="nav-label">Home</span>
@@ -58,158 +79,48 @@
           <span class="material-symbols-rounded nav-icon">history</span>
           <span class="nav-label">History</span>
         </a>
-      </nav>
-
-      <div class="sidebar-section">
+        <div class="divider"></div>
         <h3 class="sidebar-heading">You</h3>
-        <nav class="sidebar-nav" aria-label="Your content">
-          <a class="nav-item" href="#/saved" data-route="/saved">
-            <span class="material-symbols-rounded nav-icon">schedule</span>
-            <span class="nav-label">Watch Later</span>
-          </a>
-          <a class="nav-item" href="#/home" data-route="/home">
-            <span class="material-symbols-rounded nav-icon">thumb_up</span>
-            <span class="nav-label">Liked Videos</span>
-          </a>
-        </nav>
-      </div>
-
-      <div class="sidebar-footer">
-        <p class="footer-text">PawTube &copy; 2026</p>
-        <p class="footer-text sub">A better way to watch</p>
-      </div>
+        <a class="nav-item" href="#/saved" data-route="/saved">
+          <span class="material-symbols-rounded nav-icon">schedule</span>
+          <span class="nav-label">Watch Later</span>
+        </a>
+        <a class="nav-item" href="#/home" data-route="/home">
+          <span class="material-symbols-rounded nav-icon">thumb_up</span>
+          <span class="nav-label">Liked Videos</span>
+        </a>
+        <div class="sidebar-footer">
+          <p>&copy; 2026 PawTube LLC</p>
+        </div>
+      </nav>
     </aside>
-
-    <!-- Sidebar Overlay (mobile) -->
+    
     <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
     <!-- Main Content -->
     <main class="main-content" id="main-content" aria-live="polite">
-      <div style="padding:40px 24px;color:var(--text-secondary)">Loading PawTube...</div>
+      <div style="padding:40px 24px;color:var(--text-secondary);text-align:center;">Loading PawTube...</div>
     </main>
 
-    <!-- Bottom Nav (mobile) -->
-    <nav class="bottom-nav" id="bottom-nav" aria-label="Mobile navigation">
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav" id="bottom-nav">
       <a class="bnav-item active" href="#/home" data-route="/home">
         <span class="material-symbols-rounded">home</span>
-        <span class="bnav-label">Home</span>
       </a>
       <a class="bnav-item" href="#/watch" data-route="/watch">
         <span class="material-symbols-rounded">play_circle</span>
-        <span class="bnav-label">Watch</span>
+      </a>
+      <a class="bnav-item mobile-search-trigger" href="javascript:void(0)">
+        <span class="material-symbols-rounded">search</span>
       </a>
       <a class="bnav-item" href="#/history" data-route="/history">
         <span class="material-symbols-rounded">history</span>
-        <span class="bnav-label">History</span>
       </a>
     </nav>
-
-    <!-- About Modal -->
-    <div class="modal-overlay" id="about-modal">
-      <div class="modal">
-        <div class="modal-header">
-          <h2 class="modal-title">
-            <span class="material-symbols-rounded" style="color: var(--brand-red);">info</span>
-            About PawTube
-          </h2>
-          <button class="icon-btn modal-close" id="modal-close" aria-label="Close modal">
-            <span class="material-symbols-rounded">close</span>
-          </button>
-        </div>
-        <div class="modal-body">
-          <div class="about-section">
-            <div class="about-logo">
-              <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" alt="PawTube Logo" width="64" height="64" style="border-radius:16px;">
-            </div>
-            <p class="about-description">
-              <strong>PawTube</strong> is a clean, distraction-free YouTube front-end built for people who want
-              to watch videos without algorithmic rabbit holes, intrusive ads, or cluttered interfaces.
-              Just paste a link or search by name &mdash; it is that simple.
-            </p>
-          </div>
-
-          <div class="about-section">
-            <h3 class="about-heading">Key Features</h3>
-            <div class="feature-grid">
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">play_arrow</span>
-                <h4>Instant Playback</h4>
-                <p>Paste any YouTube URL or video ID and watch immediately</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">search</span>
-                <h4>Smart Search</h4>
-                <p>Search videos by name with multi-source result ranking</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">trending_up</span>
-                <h4>Trending Feed</h4>
-                <p>Discover what is popular with a clean trending grid</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">theater_comedy</span>
-                <h4>Theater Mode</h4>
-                <p>Immersive full-width viewing for the best experience</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">headphones</span>
-                <h4>Background Play</h4>
-                <p>Listen to audio while browsing other content</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">share</span>
-                <h4>Easy Sharing</h4>
-                <p>Share videos with clean links or native share</p>
-              </div>
-              <div class="feature-card">
-                <span class="material-symbols-rounded feature-icon">chat</span>
-                <h4>Telegram Bot</h4>
-                <p>Send YT video to <a href="https://t.me/PawTubeRobot/">@PawTubeRobot</a> and get playable PawTube url</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="about-section">
-            <h3 class="about-heading">How It Works</h3>
-            <div class="steps">
-              <div class="step">
-                <span class="step-number">1</span>
-                <p>Paste a YouTube link or enter a video ID in the search bar</p>
-              </div>
-              <div class="step">
-                <span class="step-number">2</span>
-                <p>Or search by video name using the search field on the Home page</p>
-              </div>
-              <div class="step">
-                <span class="step-number">3</span>
-                <p>Enjoy distraction-free playback with suggested videos on the side</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="about-section">
-            <h3 class="about-heading">Privacy &amp; Data</h3>
-            <p class="about-text">
-              PawTube stores only your watch history locally in your browser. No accounts, no tracking,
-              no data collection. Your viewing habits stay on your device. History can be cleared
-              anytime from the History page.
-            </p>
-          </div>
-
-          <div class="about-section about-footer">
-            <p class="about-text muted">
-              Built with vanilla JavaScript and the Piped API. Not affiliated with YouTube.
-            </p>
-            <p class="version-tag">PawTube v2.0</p>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- Toast -->
     <div class="toast" id="toast"></div>
   </div>
-
-<script src="./app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
