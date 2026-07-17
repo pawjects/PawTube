@@ -3,7 +3,6 @@
 [![HTML5](https://img.shields.io/badge/html5-%23E34F26.svg?style=flat-square&logo=html5&logoColor=white)](https://pawtube.localplayer.dev/)
 [![CSS3](https://img.shields.io/badge/css3-%231572B6.svg?style=flat-square&logo=css3&logoColor=white)](https://pawtube.localplayer.dev/)
 [![JavaScript](https://img.shields.io/badge/javascript-%23323330.svg?style=flat-square&logo=javascript&logoColor=%23F7DF1E)](https://pawtube.localplayer.dev/)
-[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 [![Telegram Bot](https://img.shields.io/badge/Telegram%20Bot-PawTubeRobot-2CA5E0?style=flat-square&logo=telegram)](https://t.me/PawTubeRobot)
 
 > **PawTube** is a minimalist, distraction-free, and privacy-enhanced YouTube video player.  
