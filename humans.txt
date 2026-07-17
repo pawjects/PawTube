@@ -1,0 +1,10 @@
+/* TEAM */
+  Developer: Sky
+  Collective: PawDevs
+  Site: github.com/pawjects
+
+/* SITE */
+  Last update: 2026
+  Standards: HTML5, CSS3, ES6
+  Components: Material Symbols, Material Design 3
+  Software: VS Code
