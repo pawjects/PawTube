@@ -4,7 +4,6 @@
 [![CSS3](https://img.shields.io/badge/css3-%231572B6.svg?style=flat-square&logo=css3&logoColor=white)](https://pawtube.localplayer.dev/)
 [![JavaScript](https://img.shields.io/badge/javascript-%23323330.svg?style=flat-square&logo=javascript&logoColor=%23F7DF1E)](https://pawtube.localplayer.dev/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Vercel](https://img.shields.io/badge/hosted%20on-Vercel-black?style=flat-square&logo=vercel)](https://pawtube.localplayer.dev/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram%20Bot-PawTubeRobot-2CA5E0?style=flat-square&logo=telegram)](https://t.me/PawTubeRobot)
 
 > **PawTube** is a minimalist, distraction-free, and privacy-enhanced YouTube video player.  
@@ -106,11 +105,11 @@ The **[@PawTubeRobot](https://t.me/PawTubeRobot)** makes converting YouTube link
 **How it works:**
 
 1. Open [@PawTubeRobot](https://t.me/PawTubeRobot) on Telegram
-2. Send any YouTube video URL
-3. The bot replies with a **Watch on PawTube** button
+2. Send any YouTube video URL or use @vid official inline search
+3. The bot instantly replies with a **Watch on PawTube** button message 
 4. Tap it — you're watching instantly, ad-free 🐾
 
-No setup. No account. Works from any chat or group.
+No setup. No account. No sucking of privacy.
 
 ---
 
@@ -144,7 +143,7 @@ See [`LICENSE`](LICENSE) for full terms — including important notes on YouTube
 
 ## 🐾 About PawDevs
 
-PawTube is a project by **PawDevs** — a small indie dev brand building privacy-first, minimal tools.
+PawTube is a project by **PAWJECTS** — a small indie dev brand building privacy-first, minimal tools.
 
 - 🌐 Website: [Pawjects](https://pawjects.github.io/)
 - 📺 PawTube: [pawtube.localplayer.dev/](https://pawtube.localplayer.dev/)
