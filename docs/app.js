@@ -7,7 +7,7 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-const STORAGE = { HISTORY: 'pawtube_history', SAVED: 'pawtube_saved', LIKED: 'pawtube_liked', DISLIKED: 'pawtube_disliked' };
+const STORAGE = { HISTORY: 'pawtube_history', SAVED: 'pawtube_saved', LIKED: 'pawtube_liked', DISLIKED: 'pawtube_disliked', SUBS: 'pawtube_subs' };
 const FEED_QUERIES = [
   { q: 'tech reviews latest', category: 'Tech' },
   { q: 'coding tutorials', category: 'Education' },
@@ -89,7 +89,19 @@ const store = {
     this.save(STORAGE.DISLIKED, d);
   },
   isLiked(id) { return this.get(STORAGE.LIKED).includes(id); },
-  isDisliked(id) { return this.get(STORAGE.DISLIKED).includes(id); }
+  isDisliked(id) { return this.get(STORAGE.DISLIKED).includes(id); },
+  
+  getSubs() { return this.get(STORAGE.SUBS); },
+  isSubscribed(channelId) { return this.get(STORAGE.SUBS).some(s => s.id === channelId); },
+  toggleSub(channel) {
+    if (!channel || !channel.id) return;
+    let subs = this.get(STORAGE.SUBS);
+    const idx = subs.findIndex(s => s.id === channel.id);
+    if (idx >= 0) { subs.splice(idx, 1); showToast('Unsubscribed'); }
+    else { subs.unshift({ id: channel.id, name: channel.name, avatar: channel.avatar, subscribedAt: Date.now() }); showToast('Subscribed to ' + channel.name); }
+    this.save(STORAGE.SUBS, subs);
+    return subs;
+  }
 };
 
 // Precise UI Updater for action buttons (prevents full iframe reload!)
@@ -173,7 +185,7 @@ async function loadFeed() {
       }
     });
     feedCache = [...deduped.values()].map(x => ({
-      id: x.id, title: x.title, channel: x.uploaderName,
+      id: x.id, title: x.title, channel: x.uploaderName, channelId: (x.uploaderUrl||'').replace('/channel/',''),
       thumb: x.thumbnail, avatar: x.uploaderAvatar,
       duration: x.duration, views: x.views, uploaded: x.uploaded, cat: x._cat
     }));
@@ -236,6 +248,7 @@ async function runSearch(q) {
       id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1],
       title: x.title || 'Untitled',
       channel: x.uploaderName || 'Unknown',
+      channelId: (x.uploaderUrl||'').replace('/channel/',''),
       thumb: x.thumbnail || '',
       avatar: x.uploaderAvatar || '',
       duration: x.duration || 0,
@@ -360,7 +373,7 @@ function viewWatch() {
               <span class="w-channel-name">${esc(meta.channel)}</span>
               <span class="w-channel-subs">Verified Stream</span>
             </div>
-            <button class="btn-subscribe">Subscribe</button>
+            <button class="btn-subscribe" data-channel-id="${esc(meta.channelId || meta.channel)}" data-channel-name="${esc(meta.channel)}" data-channel-avatar="${esc(meta.avatar || '')}">${store.isSubscribed(meta.channelId || meta.channel) ? 'Subscribed' : 'Subscribe'}</button>
           </div>
           <div class="watch-action-buttons">
             <div class="pill-group">
@@ -397,6 +410,55 @@ function viewHistory() {
   return `<div><h1 class="section-title" style="margin-bottom:24px">Watch History</h1><div class="related-list" style="max-width:800px">${items.join('')}</div></div>`;
 }
 
+let subsChannelVideos = {};
+let subsLoading = false;
+
+async function fetchChannelVideos(channelId) {
+  if (subsChannelVideos[channelId]) return subsChannelVideos[channelId];
+  const sub = store.getSubs().find(s => s.id === channelId);
+  if (!sub) return [];
+  try {
+    const data = await fetchPiped(`/search?q=${encodeURIComponent(sub.name)}&filter=videos`);
+    const items = (data.items || []).map(x => {
+      const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
+      const xChannelId = (x.uploaderUrl||'').replace('/channel/','');
+      if (!id || xChannelId !== channelId) return null;
+      return { id, title: x.title, channel: x.uploaderName, channelId: xChannelId, thumb: x.thumbnail, avatar: x.uploaderAvatar, duration: x.duration, views: x.views, uploaded: x.uploaded };
+    }).filter(Boolean);
+    subsChannelVideos[channelId] = items;
+    return items;
+  } catch { return []; }
+}
+
+function viewSubscriptions() {
+  const subs = store.getSubs();
+  if (!subs.length) {
+    return `<div class="empty-state"><span class="material-symbols-rounded">subscriptions</span><h2>No subscriptions yet</h2><p style="margin-top:8px">Subscribe to channels from the watch page to see their videos here.</p></div>`;
+  }
+  
+  const subsGrid = subs.map(s => `
+    <div class="subs-card" data-action="sub-channel" data-channel-id="${esc(s.id)}">
+      <img class="subs-avatar" src="${s.avatar || 'https://i.ytimg.com/vi/placeholder/mqdefault.jpg'}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2248%22 fill=%22%23555%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23fff%22 font-size=%2230%22 font-family=%22sans-serif%22>${esc(s.name[0])}</text></svg>'">
+      <div class="subs-name">${esc(s.name)}</div>
+      <button class="subs-unsub" data-action="unsub" data-channel-id="${esc(s.id)}">Unsubscribe</button>
+    </div>
+  `).join('');
+  
+  const allVideos = subs.map(s => subsChannelVideos[s.id] || []).flat();
+  const videosHtml = allVideos.length 
+    ? `<h2 class="section-title" style="margin-bottom:16px;font-size:18px;">Latest from Subscriptions</h2>
+       <div class="video-grid">${allVideos.map(v => renderVideo(v)).join('')}</div>`
+    : subsLoading 
+      ? '<div style="padding:40px;text-align:center;">Loading videos...</div>'
+      : '<div style="padding:20px;text-align:center;color:var(--text-secondary);">No videos found for your subscriptions yet.</div>';
+  
+  return `<div>
+    <div class="subs-header"><span class="material-symbols-rounded">subscriptions</span><h1 class="section-title" style="font-size:22px;">Subscriptions</h1></div>
+    <div class="subs-grid">${subsGrid}</div>
+    ${videosHtml}
+  </div>`;
+}
+
 function viewSaved() {
   const items = store.get(STORAGE.SAVED).map(h => {
     let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || { title: `Video ${h.id}`, channel: 'Saved Reference', id: h.id };
@@ -408,15 +470,24 @@ function viewSaved() {
 
 function render() {
   const h = location.hash.replace('#', '') || '/home';
-  route = ['home','watch','history','saved'].includes(h.slice(1)) ? h.slice(1) : 'home';
+  route = ['home','watch','history','saved','subscriptions'].includes(h.slice(1)) ? h.slice(1) : 'home';
   
   $$('[data-route]').forEach(el => el.classList.toggle('active', el.dataset.route === '/'+route));
   
   const main = $('#main-content');
-  if(route === 'home') main.innerHTML = viewHome();
-  else if(route === 'watch') main.innerHTML = viewWatch();
-  else if(route === 'history') main.innerHTML = viewHistory();
-  else if(route === 'saved') main.innerHTML = viewSaved();
+  if(route === 'home') { main.innerHTML = viewHome(); }
+  else if(route === 'watch') { main.innerHTML = viewWatch(); }
+  else if(route === 'history') { main.innerHTML = viewHistory(); }
+  else if(route === 'saved') { main.innerHTML = viewSaved(); }
+  else if(route === 'subscriptions') { 
+    main.innerHTML = viewSubscriptions();
+    if (!subsLoading && store.getSubs().length) {
+      subsLoading = true;
+      Promise.all(store.getSubs().map(s => fetchChannelVideos(s.id)))
+        .then(() => { subsLoading = false; render(); })
+        .catch(() => { subsLoading = false; });
+    }
+  }
   
   const hs = $('#header-search');
   if (hs && document.activeElement !== hs) hs.value = searchQuery;
@@ -436,19 +507,17 @@ document.addEventListener('click', e => {
   const routeEl = target.closest('[data-route]');
   if (routeEl) { location.hash = routeEl.dataset.route; return; }
   
-  // Mockup Subscriptions Utility Action
+  // Proper Subscription Logic
   if (target.closest('.btn-subscribe')) {
     const btn = target.closest('.btn-subscribe');
-    if (btn.textContent === 'Subscribe') {
-      btn.textContent = 'Subscribed';
-      btn.style.background = 'var(--bg-hover)';
-      btn.style.color = 'var(--text-primary)';
-      showToast('Subscribed to content updates');
-    } else {
-      btn.textContent = 'Subscribe';
-      btn.style.background = 'var(--text-primary)';
-      btn.style.color = 'var(--bg-primary)';
-      showToast('Unsubscribed');
+    const channelId = btn.dataset.channelId;
+    const channelName = btn.dataset.channelName;
+    const channelAvatar = btn.dataset.channelAvatar;
+    if (channelId) {
+      store.toggleSub({ id: channelId, name: channelName, avatar: channelAvatar });
+      const isSubbed = store.isSubscribed(channelId);
+      btn.textContent = isSubbed ? 'Subscribed' : 'Subscribe';
+      btn.className = `btn-subscribe ${isSubbed ? 'subscribed-label' : ''}`;
     }
     return;
   }
@@ -484,6 +553,25 @@ document.addEventListener('click', e => {
     if (act === 'share' && currentVideoId) { e.stopPropagation(); doShare(); }
     if (act === 'like' && currentVideoId) { e.stopPropagation(); store.toggleLike(currentVideoId); updateActionButtons(); }
     if (act === 'dislike' && currentVideoId) { e.stopPropagation(); store.toggleDislike(currentVideoId); updateActionButtons(); }
+    
+    if (act === 'unsub') {
+      e.stopPropagation();
+      const chId = actionEl.dataset.channelId;
+      if (chId) {
+        const subs = store.getSubs();
+        const sub = subs.find(s => s.id === chId);
+        if (sub) store.toggleSub(sub);
+        render();
+      }
+    }
+    
+    if (act === 'sub-channel') {
+      const chId = actionEl.dataset.channelId;
+      if (chId) {
+        location.hash = '#/subscriptions';
+        render();
+      }
+    }
     
     if (act === 'run-search-home') {
         const q = $('#home-search')?.value;
@@ -584,14 +672,10 @@ document.addEventListener('keydown', e => {
 });
 
 // Passive Mock Button Toasts
-$('#voice-btn')?.addEventListener('click', () => showToast('Voice activation audio interface ready...'));
-$('#create-btn')?.addEventListener('click', () => showToast('Creator dashboard is coming soon!'));
-$('#notif-btn')?.addEventListener('click', () => showToast('No new activity notifications.'));
+$('#voice-btn')?.addEventListener('click', () => showToast('Voice search ready...'));
 
-// About System Modal Controllers
-$('#about-btn')?.addEventListener('click', () => $('#about-modal').classList.add('show'));
-$('#modal-close')?.addEventListener('click', () => $('#about-modal').classList.remove('show'));
-$('#about-modal')?.addEventListener('click', (e) => { if (e.target.id === 'about-modal') $('#about-modal').classList.remove('show'); });
+// About Button - show info toast
+$('#about-btn')?.addEventListener('click', () => showToast('PawTube v2.0 - Privacy-focused YouTube client'));
 
 window.addEventListener('hashchange', () => { 
   window.scrollTo(0,0); 
