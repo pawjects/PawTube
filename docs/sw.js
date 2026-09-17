@@ -15,8 +15,8 @@ self.addEventListener('install', event => {
 });
 
 self.addEventListener('fetch', event => {
-  // Never cache Piped API or YouTube image calls so the feed stays live
-  if (event.request.url.startsWith('https://piped-instances') || event.request.url.includes('ytimg.com')) {
+  // Never cache API or YouTube image calls so the feed stays live
+  if (event.request.url.includes('/api/') || event.request.url.includes('ytimg.com')) {
     return;
   }
   event.respondWith(

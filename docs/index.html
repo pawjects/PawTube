@@ -65,29 +65,19 @@
           <span class="material-symbols-rounded nav-icon">home</span>
           <span class="nav-label">Home</span>
         </a>
-        <a class="nav-item" href="#/watch" data-route="/watch">
-          <span class="material-symbols-rounded nav-icon">play_circle</span>
-          <span class="nav-label">Watch</span>
+        <a class="nav-item" href="#/shorts" data-route="/shorts">
+          <span class="material-symbols-rounded nav-icon">amp_stories</span>
+          <span class="nav-label">Shorts</span>
         </a>
-        <a class="nav-item" href="#/subscriptions" data-route="/subscriptions">
-          <span class="material-symbols-rounded nav-icon">subscriptions</span>
-          <span class="nav-label">Subscriptions</span>
+        <a class="nav-item" href="#/library" data-route="/library">
+          <span class="material-symbols-rounded nav-icon">video_library</span>
+          <span class="nav-label">Playlists &amp; History</span>
         </a>
-        <a class="nav-item" href="#/history" data-route="/history">
-          <span class="material-symbols-rounded nav-icon">history</span>
-          <span class="nav-label">History</span>
+        <a class="nav-item" href="#/you" data-route="/you">
+          <span class="material-symbols-rounded nav-icon">person</span>
+          <span class="nav-label">You</span>
         </a>
-        <div class="divider"></div>
-        <h3 class="sidebar-heading">You</h3>
-        <a class="nav-item" href="#/saved" data-route="/saved">
-          <span class="material-symbols-rounded nav-icon">schedule</span>
-          <span class="nav-label">Watch Later</span>
-        </a>
-        <a class="nav-item" href="#/home" data-route="/home">
-          <span class="material-symbols-rounded nav-icon">thumb_up</span>
-          <span class="nav-label">Liked Videos</span>
-        </a>
-        <div class="sidebar-footer">
+        <div class="sidebar-footer" style="margin-top:auto; padding-top:20px;">
           <p>&copy; 2026 PawTube LLC</p>
         </div>
       </nav>
@@ -102,26 +92,30 @@
 
     <!-- Bottom Nav -->
     <nav class="bottom-nav" id="bottom-nav">
+      <div class="bnav-pill" id="bnav-pill"></div>
       <a class="bnav-item active" href="#/home" data-route="/home">
-        <span class="material-symbols-rounded">home</span>
+        <div class="bnav-icon-wrapper"><span class="material-symbols-rounded">home</span></div>
+        <span class="bnav-label">Home</span>
       </a>
-      <a class="bnav-item" href="#/watch" data-route="/watch">
-        <span class="material-symbols-rounded">play_circle</span>
+      <a class="bnav-item" href="#/shorts" data-route="/shorts">
+        <div class="bnav-icon-wrapper"><span class="material-symbols-rounded">amp_stories</span></div>
+        <span class="bnav-label">Shorts</span>
       </a>
-      <a class="bnav-item" href="#/subscriptions" data-route="/subscriptions">
-        <span class="material-symbols-rounded">subscriptions</span>
+      <a class="bnav-item" href="#/library" data-route="/library">
+        <div class="bnav-icon-wrapper"><span class="material-symbols-rounded">video_library</span></div>
+        <span class="bnav-label">Library</span>
       </a>
-      <a class="bnav-item mobile-search-trigger" href="javascript:void(0)">
-        <span class="material-symbols-rounded">search</span>
-      </a>
-      <a class="bnav-item" href="#/history" data-route="/history">
-        <span class="material-symbols-rounded">history</span>
+      <a class="bnav-item" href="#/you" data-route="/you">
+        <div class="bnav-icon-wrapper"><span class="material-symbols-rounded">person</span></div>
+        <span class="bnav-label">You</span>
       </a>
     </nav>
 
     <!-- Toast -->
     <div class="toast" id="toast"></div>
   </div>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="./player.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>

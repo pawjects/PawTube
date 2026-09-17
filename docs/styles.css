@@ -184,7 +184,7 @@ input[type="search"]::-webkit-search-results-decoration { display: none; }
 }
 .nav-item:hover { background: var(--bg-elevated); }
 .nav-item:active { background: var(--bg-active); transform: scale(0.98); }
-.nav-item.active { background: var(--bg-elevated); font-weight: 600; }
+.nav-item.active { background: rgba(255, 255, 255, 0.12); font-weight: 600; box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
 .nav-item.active .nav-icon { font-variation-settings: 'FILL' 1; }
 
 .mini-nav-item {
@@ -417,21 +417,73 @@ input[type="search"]::-webkit-search-results-decoration { display: none; }
 
 /* Bottom Nav (Mobile) */
 .bottom-nav {
-  display: none; position: fixed; bottom: 0; left: 0; right: 0;
-  height: var(--bottom-nav-height); background: var(--bg-glass);
-  backdrop-filter: var(--blur-lg); -webkit-backdrop-filter: var(--blur-lg);
-  border-top: 1px solid var(--border-color); z-index: 100;
+  display: none;
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 32px);
+  max-width: 400px;
+  height: 64px;
+  background: rgba(28, 28, 28, 0.6);
+  backdrop-filter: blur(24px) saturate(1.5);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+  border-radius: 32px;
+  z-index: 100;
+  padding: 0 8px;
+  align-items: center;
+}
+.bnav-pill {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: calc((100% - 16px) / 4);
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 24px;
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  z-index: 0;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.2);
 }
 .bnav-item {
-  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  color: var(--text-secondary); transition: 0.2s;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--text-secondary);
+  transition: color 0.3s;
+  z-index: 1;
+  position: relative;
+  text-decoration: none;
+  height: 100%;
 }
-.bnav-item:active { transform: scale(0.9); }
-.bnav-item .material-symbols-rounded { font-size: 24px; transition: transform 0.2s; }
+.bnav-item:active .bnav-icon-wrapper { transform: scale(0.85); }
 .bnav-item.active { color: var(--text-primary); }
-.bnav-item.active .material-symbols-rounded { font-variation-settings: 'FILL' 1; transform: translateY(-2px); }
-.bnav-label { font-size: 10px; font-weight: 500; }
-.bnav-profile { width: 24px; height: 24px; border-radius: 50%; }
+.bnav-item .bnav-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.bnav-item .material-symbols-rounded { 
+  font-size: 24px; 
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.bnav-item.active .material-symbols-rounded { 
+  font-variation-settings: 'FILL' 1; 
+  transform: translateY(-1px); 
+}
+.bnav-label { font-size: 11px; font-weight: 500; transition: opacity 0.3s, transform 0.3s; opacity: 0.7; transform: translateY(0); }
+.bnav-item.active .bnav-label { opacity: 1; transform: translateY(-1px); }
+
+/* Hide bottom nav when keyboard is open (detect focus on inputs) */
+body:has(input:focus) .bottom-nav,
+body:has(textarea:focus) .bottom-nav {
+  display: none !important;
+}
 
 /* Page Transitions */
 .main-content > * {
@@ -543,3 +595,280 @@ body.theater .header, body.theater .sidebar, body.theater .mini-sidebar, body.th
 body.theater .main-content { margin: 0; padding: 0; }
 body.theater .player-container { border-radius: 0; max-height: 100vh; }
 
+
+/* Custom Player Styles */
+.custom-player-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  display: flex;
+  overflow: hidden;
+  border-radius: inherit;
+}
+.custom-player-wrapper.fullscreen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 99999;
+  border-radius: 0;
+}
+.custom-player-wrapper #yt-player-container {
+  width: 100%;
+  height: 100%;
+  pointer-events: none; /* Let clicks fall through to our UI layer if possible, actually wait, YT needs pointer-events for double click? No, we will capture clicks on our UI layer */
+}
+.custom-player-ui {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.custom-player-wrapper.idle .custom-player-ui:not(:hover):not(.force-show) {
+  opacity: 0;
+}
+.custom-player-wrapper:not(.idle) .custom-player-ui,
+.custom-player-wrapper.paused .custom-player-ui {
+  opacity: 1;
+}
+.player-click-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* Spinner */
+.player-loading-spinner {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  z-index: 2;
+  display: none;
+}
+.custom-player-wrapper.buffering .player-loading-spinner {
+  display: block;
+}
+.player-loading-spinner .spinner-icon {
+  font-size: 64px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+/* Center Play */
+.player-center-play {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  color: white;
+  z-index: 2;
+  background: rgba(0,0,0,0.6);
+  border-radius: 50%;
+  padding: 16px;
+  cursor: pointer;
+  display: flex;
+  opacity: 0;
+  transition: transform 0.2s, opacity 0.2s;
+  pointer-events: none;
+}
+.custom-player-wrapper.paused .player-center-play {
+  opacity: 1;
+}
+
+/* Bottom Controls */
+.player-bottom-controls {
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+  padding: 0 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Progress Bar */
+.player-progress-container {
+  height: 5px;
+  background: rgba(255,255,255,0.3);
+  position: relative;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: height 0.1s;
+}
+.player-progress-container:hover {
+  height: 8px;
+}
+.player-progress-buffered {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: rgba(255,255,255,0.5);
+  border-radius: inherit;
+  width: 0%;
+}
+.player-progress-hover {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: rgba(255,255,255,0.7);
+  border-radius: inherit;
+  width: 0%;
+  display: none;
+}
+.player-progress-container:hover .player-progress-hover {
+  display: block;
+}
+.player-progress-filled {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  background: #ff0000;
+  border-radius: inherit;
+  width: 0%;
+}
+.player-progress-thumb {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #ff0000;
+  transition: transform 0.1s;
+}
+.player-progress-container:hover .player-progress-thumb,
+.player-progress-container.dragging .player-progress-thumb {
+  transform: translate(-50%, -50%) scale(1);
+}
+.player-time-tooltip {
+  position: absolute;
+  bottom: 15px;
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  display: none;
+  white-space: nowrap;
+}
+
+/* Controls Row */
+.player-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.player-controls-left, .player-controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.player-btn {
+  background: none;
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+.player-btn:hover {
+  background: rgba(255,255,255,0.2);
+}
+.player-time-display {
+  color: #fff;
+  font-size: 13px;
+  font-family: monospace;
+  margin-left: 8px;
+  user-select: none;
+}
+.player-volume-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.player-volume-slider {
+  width: 0;
+  opacity: 0;
+  transition: width 0.2s, opacity 0.2s;
+  cursor: pointer;
+  accent-color: #fff;
+}
+.player-volume-group:hover .player-volume-slider,
+.player-volume-slider:focus {
+  width: 80px;
+  opacity: 1;
+}
+
+/* Settings Menu */
+.player-settings-container {
+  position: relative;
+}
+.player-settings-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 8px;
+  background: rgba(28,28,28,0.95);
+  border-radius: 8px;
+  padding: 8px 0;
+  min-width: 200px;
+  display: none;
+  color: #fff;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  backdrop-filter: blur(8px);
+}
+.player-settings-menu.open {
+  display: block;
+}
+.player-menu-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: background 0.2s;
+}
+.player-menu-item:hover {
+  background: rgba(255,255,255,0.1);
+}
+.player-menu-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.player-menu-header:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+@media (max-width: 600px) {
+  .player-volume-group:hover .player-volume-slider { width: 60px; }
+  .player-btn { padding: 6px; }
+  .player-time-display { font-size: 11px; }
+  /* hide volume slider on mobile, keep button */
+  .player-volume-slider { display: none; }
+}
+
+/* Enhanced Theater Mode */
+body.theater #sidebar { display: none; }
+body.theater .main-content { margin-left: 0 !important; max-width: 100%; padding-top: 0; }
+body.theater #header { display: none; }
+body.theater .watch-layout { max-width: 100%; display: block; padding: 0; }
+body.theater .player-section { max-width: 100%; }
+body.theater .player-container { width: 100%; max-height: 85vh; border-radius: 0; border: none; }
+body.theater #watch-details-container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+body.theater #watch-related-container { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+body.theater {
+  background: #000;
+}
+body.theater .video-details, body.theater .related-section, body.theater .sidebar-heading {
+  color: #fff;
+}

@@ -162,65 +162,32 @@ function fallbackShare(url) {
 
 // API Connection Layer
 const API = {
-  primary: 'https://piped.private.coffee',
-  fallbacks: [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.in.projectsegfau.lt',
-    'https://pipedapi.adminforge.de'
-  ],
-  unhealthy: new Set(),
+  baseUrl: '/api',
   activeRequest: null,
 
-  async getInstances() {
-    return [this.primary, ...this.fallbacks].filter(url => !this.unhealthy.has(url));
-  },
-
-  markUnhealthy(url) {
-    if (url === this.primary) return; // Keep primary but deprioritize
-    this.unhealthy.add(url);
-    setTimeout(() => this.unhealthy.delete(url), 5 * 60 * 1000); // 5 min cooldown
-  },
-
   async request(path, options = {}) {
-    const instances = await this.getInstances();
-    let lastError = null;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 12000);
 
-    for (const api of instances) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), options.timeout || 8000);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
 
-      try {
-        const response = await fetch(`${api}${path}`, {
-          ...options,
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          if (response.status >= 500) {
-            this.markUnhealthy(api);
-          }
-          throw new Error(`HTTP ${response.status}`);
-        }
-        
-        return await response.json();
-      } catch (error) {
-        clearTimeout(timeoutId);
-        lastError = error;
-        
-        if (error.name !== 'AbortError' && !error.message.includes('HTTP 4')) {
-           this.markUnhealthy(api);
-        }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
+      
+      return await response.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
     }
-    throw lastError || new Error('All API instances unavailable');
   }
 };
-
-async function fetchPiped(path) {
-  return API.request(path);
-}
 
 // Feed Manager
 const feedManager = {
@@ -245,8 +212,8 @@ const feedManager = {
       }
       
       const results = await Promise.allSettled([
-        fetchPiped('/trending?region=US'), // Get actual trending
-        ...queryBase.map(q => fetchPiped(`/search?q=${encodeURIComponent(q.q)}&filter=videos`))
+        API.request('/trending?region=US'), // Get actual trending
+        ...queryBase.map(q => API.request(`/search?q=${encodeURIComponent(q.q)}&filter=videos`))
       ]);
       
       const deduped = new Map();
@@ -520,7 +487,7 @@ let watchDetailsCache = new Map();
 async function fetchVideoDetails(id) {
   if (watchDetailsCache.has(id)) return watchDetailsCache.get(id);
   try {
-    const data = await API.request(`/streams/${id}`);
+    const data = await API.request(`/videos?id=${id}`);
     const details = {
       id: id,
       title: data.title,
@@ -578,12 +545,23 @@ function viewWatch() {
   
   const relatedVideos = meta.related || feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
   
-  return `<div class="watch-page"><div class="watch-layout">
+  return `<div class="watch-page" id="watch-layout-container"><div class="watch-layout">
     <div class="player-section">
-      <div class="player-container">
-        <iframe src="${embedSrc(currentVideoId)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+      <div class="player-container" id="player-mount-point">
+        <!-- Player is attached here dynamically to prevent reload -->
       </div>
-      <div class="video-details">
+      <div id="watch-details-container">
+        ${renderWatchDetailsHTML(meta, saved, liked, disliked)}
+      </div>
+    </div>
+    <div class="related-section" id="watch-related-container">
+      ${renderRelatedVideosHTML(relatedVideos)}
+    </div>
+  </div></div>`;
+}
+
+function renderWatchDetailsHTML(meta, saved, liked, disliked) {
+  return `<div class="video-details">
         <h1 class="video-title">${esc(meta.title)}</h1>
         <div class="watch-actions-bar">
           <div class="watch-channel-info">
@@ -612,12 +590,27 @@ function viewWatch() {
           <p><strong>${fmtViews(meta.views || 4500)} ${meta.uploaded ? `• ${timeAgo(meta.uploaded) || meta.uploaded}` : ''}</strong></p>
           <p style="margin-top:8px; white-space: pre-wrap; word-break: break-word;">${meta.description ? esc(meta.description.substring(0, 300)) + (meta.description.length > 300 ? '...' : '') : 'Clean, tracker-free player presentation on PawTube frontend environment.'}</p>
         </div>
-      </div>
-    </div>
-    <div class="related-section">
-      ${watchLoading && !meta.related ? getSkeletonGrid(6) : relatedVideos.map(s => renderVideo(s, true)).join('')}
-    </div>
-  </div></div>`;
+      </div>`;
+}
+
+function renderRelatedVideosHTML(relatedVideos) {
+  return watchLoading && !relatedVideos.length ? getSkeletonGrid(6) : relatedVideos.map(s => renderVideo(s, true)).join('');
+}
+
+function updateWatchDetails() {
+  const cachedMeta = feedCache.find(f => f.id === currentVideoId) || searchResults.find(r => r.id === currentVideoId);
+  const meta = watchDetailsCache.get(currentVideoId) || cachedMeta || { title: 'Loading details...', channel: 'Loading...', loading: true };
+  const saved = store.isSaved(currentVideoId);
+  const liked = store.isLiked(currentVideoId);
+  const disliked = store.isDisliked(currentVideoId);
+  
+  const relatedVideos = meta.related || feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
+  
+  const detailsContainer = $('#watch-details-container');
+  if (detailsContainer) detailsContainer.innerHTML = renderWatchDetailsHTML(meta, saved, liked, disliked);
+  
+  const relatedContainer = $('#watch-related-container');
+  if (relatedContainer) relatedContainer.innerHTML = renderRelatedVideosHTML(relatedVideos);
 }
 
 function viewHistory() {
@@ -651,7 +644,7 @@ async function fetchChannelVideos(channelId) {
   
   const fetchPromise = (async () => {
     try {
-      const data = await API.request(`/search?q=${encodeURIComponent(sub.name)}&filter=videos`);
+      const data = await API.request(`/search?channelId=${encodeURIComponent(channelId)}&filter=videos`);
       const items = (data.items || []).map(x => {
         const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
         const xChannelId = (x.uploaderUrl||'').replace('/channel/','');
@@ -710,15 +703,47 @@ function viewSaved() {
 }
 
 function render() {
-  const h = location.hash.replace('#', '') || '/home';
-  route = ['home','watch','history','saved','subscriptions'].includes(h.slice(1)) ? h.slice(1) : 'home';
+  const hash = location.hash.replace('#', '');
+  const path = hash.split('?')[0] || '/home';
+  route = ['home','watch','history','saved','subscriptions','shorts','library','you'].includes(path.slice(1)) ? path.slice(1) : 'home';
   
-  $$('.nav-item, .bnav-item').forEach(el => el.classList.remove('active'));
-  $$(`[data-route="/${route}"]`).forEach(el => el.classList.add('active'));
+  let activeTab = route;
+  if (route === 'history' || route === 'saved') activeTab = 'library';
+  if (route === 'subscriptions') activeTab = 'you';
+  
+  $('.nav-item, .bnav-item').forEach(el => el.classList.remove('active'));
+  $(`[data-route="/${activeTab}"]`).forEach(el => el.classList.add('active'));
+  
+  const tabs = ['home', 'shorts', 'library', 'you'];
+  const tabIndex = tabs.indexOf(activeTab);
+  const pill = $('#bnav-pill');
+  if (pill) {
+     if (tabIndex !== -1) {
+         pill.style.opacity = '1';
+         pill.style.transform = `translateX(${tabIndex * 100}%)`;
+     } else {
+         pill.style.opacity = '0';
+     }
+  }
   
   const main = $('#main-content');
+  
+  if (window.playerWrapper && playerWrapper.parentNode) {
+      playerWrapper.remove();
+  }
+
   if(route === 'home') { main.innerHTML = viewHome(); }
-  else if(route === 'watch') { main.innerHTML = viewWatch(); }
+  else if(route === 'watch') { 
+      if (main.querySelector('#watch-layout-container') && main.dataset.vid === currentVideoId) {
+          updateWatchDetails();
+      } else {
+          main.innerHTML = viewWatch(); 
+          main.dataset.vid = currentVideoId;
+          const mount = $('#player-mount-point');
+          if (mount && window.playerWrapper) mount.appendChild(window.playerWrapper);
+          if (window.initPlayer) window.initPlayer(currentVideoId);
+      }
+  }
   else if(route === 'history') { main.innerHTML = viewHistory(); }
   else if(route === 'saved') { main.innerHTML = viewSaved(); }
   else if(route === 'subscriptions') { 
@@ -730,6 +755,9 @@ function render() {
         .catch(() => { subsLoading = false; });
     }
   }
+  else if(route === 'shorts') { main.innerHTML = viewShorts(); fetchShorts(); }
+  else if(route === 'library') { main.innerHTML = viewLibrary(); }
+  else if(route === 'you') { main.innerHTML = viewYou(); }
   
   const hs = $('#header-search');
   if (hs && document.activeElement !== hs) hs.value = searchQuery;
@@ -948,3 +976,193 @@ function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+// --- New Views ---
+
+function viewLibrary() {
+  const historyData = store.get(STORAGE.HISTORY).slice(0, 10);
+  const savedData = store.get(STORAGE.SAVED).slice(0, 10);
+  
+  const renderList = (data, title, href) => {
+    if (!data.length) return '';
+    const items = data.map(h => {
+        let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: '', id: h.id };
+        return renderVideo(f, false);
+    }).join('');
+    return `
+    <div style="margin-bottom:32px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+         <h2 style="font-size:18px; font-weight:600;">${title}</h2>
+         <a href="${href}" style="color:var(--text-secondary); font-size:13px; font-weight:500; text-decoration:none; display:flex; align-items:center;"><span style="margin-right:4px;">See all</span><span class="material-symbols-rounded" style="font-size:16px;">chevron_right</span></a>
+      </div>
+      <div class="video-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px;">
+        ${items}
+      </div>
+    </div>`;
+  };
+
+  const historyHtml = renderList(historyData, 'History', '#/history');
+  const savedHtml = renderList(savedData, 'Watch Later', '#/saved');
+  
+  if (!historyHtml && !savedHtml) {
+      return `<div class="empty-state"><span class="material-symbols-rounded">video_library</span><h2>Your library is empty</h2><p style="margin-top:8px">Videos you watch and save will appear here.</p></div>`;
+  }
+  
+  return `<div style="padding-bottom: 80px;">
+    <h1 class="section-title" style="margin-bottom:24px; display:flex; align-items:center; gap:8px;"><span class="material-symbols-rounded">video_library</span> Library</h1>
+    ${historyHtml}
+    ${savedHtml}
+  </div>`;
+}
+
+function viewYou() {
+  const subs = store.getSubs();
+  return `<div style="padding-bottom: 80px;">
+    <div style="display:flex; align-items:center; gap:16px; margin-bottom:32px; padding-bottom:24px; border-bottom:1px solid var(--border-color);">
+       <img src="https://ui-avatars.com/api/?name=Guest+User&background=333&color=fff&size=80" style="border-radius:50%; width:80px; height:80px;">
+       <div>
+         <h1 style="font-size:24px; font-weight:700; margin-bottom:4px;">Guest User</h1>
+         <p style="color:var(--text-secondary); font-size:13px;">Manage your PawTube experience</p>
+       </div>
+    </div>
+    
+    <div class="you-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+       <a href="#/subscriptions" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
+         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">subscriptions</span>
+         <div>
+            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Subscriptions</h3>
+            <p style="font-size:12px; color:var(--text-secondary);">${subs.length} channels followed</p>
+         </div>
+       </a>
+       
+       <a href="#/history" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
+         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">history</span>
+         <div>
+            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Watch History</h3>
+            <p style="font-size:12px; color:var(--text-secondary);">Review your watched videos</p>
+         </div>
+       </a>
+
+       <a href="#/saved" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
+         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">schedule</span>
+         <div>
+            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Watch Later</h3>
+            <p style="font-size:12px; color:var(--text-secondary);">Videos saved for later</p>
+         </div>
+       </a>
+       
+       <div class="you-card" onclick="alert('Settings menu opening...')" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); cursor:pointer; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
+         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">settings</span>
+         <div>
+            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Settings & Preferences</h3>
+            <p style="font-size:12px; color:var(--text-secondary);">Theme, playback, and privacy</p>
+         </div>
+       </div>
+    </div>
+  </div>`;
+}
+
+let shortsFeed = [];
+let currentShortIndex = 0;
+function viewShorts() {
+    return `<div id="shorts-container" style="height:calc(100vh - var(--header-height)); width:100%; display:flex; justify-content:center; align-items:center; background:#000;">
+       <div style="color:white;"><span class="material-symbols-rounded spinner" style="animation:spin 1s linear infinite; font-size:48px;">progress_activity</span></div>
+    </div>`;
+}
+
+function fetchShorts() {
+   if (shortsFeed.length > 0) {
+       renderShortsUI();
+       return;
+   }
+   
+   API.request('/search?q=%23shorts&filter=videos')
+     .then(data => {
+         if (data.items && data.items.length) {
+             shortsFeed = data.items.map(item => ({
+                 id: item.id,
+                 title: item.title,
+                 channel: item.uploaderName,
+                 thumb: item.thumbnail
+             }));
+             renderShortsUI();
+         } else {
+             const container = $('#shorts-container');
+             if (container) container.innerHTML = `<div style="color:white; opacity:0.7;">No Shorts found right now.</div>`;
+         }
+     }).catch(e => {
+         const container = $('#shorts-container');
+         if (container) container.innerHTML = `<div style="color:white; opacity:0.7;">Failed to load Shorts.</div>`;
+     });
+}
+
+function renderShortsUI() {
+    const container = $('#shorts-container');
+    if (!container) return; // switched route
+    if (!shortsFeed.length) {
+        container.innerHTML = `<div style="color:white; opacity:0.7;">No shorts found.</div>`;
+        return;
+    }
+    const short = shortsFeed[currentShortIndex];
+    
+    container.innerHTML = `
+      <div style="position:relative; width:100%; max-width:480px; height:calc(100vh - var(--header-height)); max-height:100%; background:#111; overflow:hidden; border-radius:16px;">
+         <iframe width="100%" height="100%" src="https://www.youtube.com/embed/${short.id}?autoplay=1&controls=0&modestbranding=1&loop=1&playlist=${short.id}&playsinline=1" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen style="pointer-events:none;"></iframe>
+         <div style="position:absolute; bottom:120px; left:16px; right:64px; color:white; z-index:10; text-shadow:0 1px 4px rgba(0,0,0,0.8);">
+            <h3 style="font-size:16px; font-weight:600; margin-bottom:8px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${short.title}</h3>
+            <p style="font-size:14px; font-weight:500;">@${short.channel}</p>
+         </div>
+         <div style="position:absolute; bottom:120px; right:16px; display:flex; flex-direction:column; gap:24px; z-index:10;">
+            <button onclick="window.showToast?.('Liked Short')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
+               <span class="material-symbols-rounded" style="font-size:24px;">thumb_up</span>
+            </button>
+            <button onclick="window.showToast?.('Disliked Short')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
+               <span class="material-symbols-rounded" style="font-size:24px;">thumb_down</span>
+            </button>
+            <button onclick="navigator.clipboard.writeText('https://youtube.com/watch?v=${short.id}'); window.showToast?.('Link copied')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
+               <span class="material-symbols-rounded" style="font-size:24px;">share</span>
+            </button>
+         </div>
+         <button onclick="window.prevShort()" style="position:absolute; top:30%; right:16px; transform:translateY(-50%); background:rgba(255,255,255,0.15); backdrop-filter:blur(10px); color:white; border:none; border-radius:50%; width:48px; height:48px; cursor:pointer; z-index:10; ${currentShortIndex === 0 ? 'opacity:0; pointer-events:none;' : ''}">
+            <span class="material-symbols-rounded">keyboard_arrow_up</span>
+         </button>
+         <button onclick="window.nextShort()" style="position:absolute; bottom:30%; right:16px; transform:translateY(50%); background:rgba(255,255,255,0.15); backdrop-filter:blur(10px); color:white; border:none; border-radius:50%; width:48px; height:48px; cursor:pointer; z-index:10; ${currentShortIndex === shortsFeed.length - 1 ? 'opacity:0; pointer-events:none;' : ''}">
+            <span class="material-symbols-rounded">keyboard_arrow_down</span>
+         </button>
+         <!-- transparent touch overlay to capture swipe -->
+         <div id="shorts-touch-layer" style="position:absolute; inset:0; z-index:5;"></div>
+      </div>
+    `;
+    
+    const layer = $('#shorts-touch-layer');
+    if(layer) {
+        let touchStartY = 0;
+        layer.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, {passive: true});
+        layer.addEventListener('touchend', e => {
+            let touchEndY = e.changedTouches[0].clientY;
+            if (touchStartY - touchEndY > 50) window.nextShort();
+            else if (touchEndY - touchStartY > 50) window.window.prevShort();
+            else {
+                // simple tap to toggle pause could be tricky due to iframe API on shorts
+            }
+        }, {passive: true});
+        
+        layer.onwheel = (e) => {
+            if (e.deltaY > 50) { window.nextShort(); e.preventDefault(); }
+            else if (e.deltaY < -50) { window.prevShort(); e.preventDefault(); }
+        };
+    }
+}
+
+window.nextShort = function() {
+    if (currentShortIndex < shortsFeed.length - 1) {
+        currentShortIndex++;
+        renderShortsUI();
+    }
+}
+window.prevShort = function() {
+    if (currentShortIndex > 0) {
+        currentShortIndex--;
+        renderShortsUI();
+    }
+}
