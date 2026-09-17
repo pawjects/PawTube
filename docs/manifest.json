@@ -4,8 +4,8 @@
   "description": "A clean, modern, distraction-free interface built for a pure video experience.",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#0f0f0f",
-  "theme_color": "#0f0f0f",
+  "background_color": "#000000",
+  "theme_color": "#000000",
   "icons": [
     {
       "src": "https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png",

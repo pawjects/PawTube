@@ -1,0 +1,14 @@
+{
+  "name": "pawtube",
+  "version": "1.0.0",
+  "description": "PawTube - A clean, distraction-free YouTube experience",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "echo 'No build required'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

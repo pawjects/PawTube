@@ -58,6 +58,15 @@ const store = {
     h.unshift({ id, ts: Date.now() });
     this.save(STORAGE.HISTORY, h.slice(0, 50));
   },
+  removeHistory(id) {
+    let h = this.get(STORAGE.HISTORY).filter(x => x.id !== id);
+    this.save(STORAGE.HISTORY, h);
+    showToast('Removed from History');
+  },
+  clearHistory() {
+    this.save(STORAGE.HISTORY, []);
+    showToast('History cleared');
+  },
   toggleSaved(id) {
     if (!id) return;
     let s = this.get(STORAGE.SAVED);
@@ -152,46 +161,159 @@ function fallbackShare(url) {
 }
 
 // API Connection Layer
-async function fetchPiped(path) {
-  try {
-    const res = await fetch('https://piped-instances.kavin.rocks/');
-    const instances = await res.json();
-    const candidates = instances.filter(x => x.api_url && x.uptime_24h > 80).sort((a,b) => b.uptime_24h - a.uptime_24h).slice(0,4).map(x => x.api_url);
-    if (apiBase) candidates.unshift(apiBase);
-    
-    for (const api of [...new Set(candidates)]) {
+const API = {
+  primary: 'https://piped.private.coffee',
+  fallbacks: [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.in.projectsegfau.lt',
+    'https://pipedapi.adminforge.de'
+  ],
+  unhealthy: new Set(),
+  activeRequest: null,
+
+  async getInstances() {
+    return [this.primary, ...this.fallbacks].filter(url => !this.unhealthy.has(url));
+  },
+
+  markUnhealthy(url) {
+    if (url === this.primary) return; // Keep primary but deprioritize
+    this.unhealthy.add(url);
+    setTimeout(() => this.unhealthy.delete(url), 5 * 60 * 1000); // 5 min cooldown
+  },
+
+  async request(path, options = {}) {
+    const instances = await this.getInstances();
+    let lastError = null;
+
+    for (const api of instances) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), options.timeout || 8000);
+
       try {
-        const c = new AbortController(); setTimeout(() => c.abort(), 8000);
-        const r = await fetch(`${api}${path}`, { signal: c.signal });
-        if (r.ok) { apiBase = api; return await r.json(); }
-      } catch(e) {}
+        const response = await fetch(`${api}${path}`, {
+          ...options,
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          if (response.status >= 500) {
+            this.markUnhealthy(api);
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        return await response.json();
+      } catch (error) {
+        clearTimeout(timeoutId);
+        lastError = error;
+        
+        if (error.name !== 'AbortError' && !error.message.includes('HTTP 4')) {
+           this.markUnhealthy(api);
+        }
+      }
     }
-    throw new Error('API down');
-  } catch(e) { throw e; }
+    throw lastError || new Error('All API instances unavailable');
+  }
+};
+
+async function fetchPiped(path) {
+  return API.request(path);
 }
 
-async function loadFeed() {
-  if (feedCache.length) return;
-  feedLoading = true; render();
-  try {
-    const results = await Promise.allSettled(FEED_QUERIES.map(q => fetchPiped(`/search?q=${encodeURIComponent(q.q)}&filter=videos`)));
-    const deduped = new Map();
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled') {
-        (r.value.items || []).forEach(x => {
-          const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
-          if (id && !deduped.has(id)) deduped.set(id, { ...x, id, _cat: FEED_QUERIES[i].category });
-        });
+// Feed Manager
+const feedManager = {
+  lastRefresh: 0,
+  isRefreshing: false,
+  
+  async loadFeed(force = false) {
+    if (feedCache.length > 0 && !force && (Date.now() - this.lastRefresh < 15 * 60 * 1000)) return;
+    if (this.isRefreshing) return;
+    
+    this.isRefreshing = true;
+    feedLoading = true;
+    render();
+    
+    try {
+      const history = store.get(STORAGE.HISTORY).slice(0, 10);
+      let queryBase = FEED_QUERIES;
+      
+      // Basic local personalization: add history items to search queries occasionally
+      if (history.length > 0 && Math.random() > 0.5) {
+        queryBase = [...FEED_QUERIES, { q: `related to video`, category: 'Recommended' }];
       }
-    });
-    feedCache = [...deduped.values()].map(x => ({
-      id: x.id, title: x.title, channel: x.uploaderName, channelId: (x.uploaderUrl||'').replace('/channel/',''),
-      thumb: x.thumbnail, avatar: x.uploaderAvatar,
-      duration: x.duration, views: x.views, uploaded: x.uploaded, cat: x._cat
-    }));
-    feed = activeCategory === 'All' ? feedCache : feedCache.filter(x => x.cat === activeCategory);
-  } catch(e) { showToast('Could not load feed'); }
-  feedLoading = false; render();
+      
+      const results = await Promise.allSettled([
+        fetchPiped('/trending?region=US'), // Get actual trending
+        ...queryBase.map(q => fetchPiped(`/search?q=${encodeURIComponent(q.q)}&filter=videos`))
+      ]);
+      
+      const deduped = new Map();
+      
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          const items = r.value.items || Array.isArray(r.value) ? r.value : [];
+          
+          let cat = 'Trending';
+          if (i > 0) cat = queryBase[i - 1].category;
+
+          items.forEach(x => {
+            const id = x.url ? (x.url.match(/v=([a-zA-Z0-9_-]{11})/) || [])[1] : (x.videoId || '');
+            if (id && !deduped.has(id) && x.type === 'stream') {
+               deduped.set(id, { ...x, id, _cat: cat });
+            }
+          });
+        }
+      });
+      
+      const combined = [...deduped.values()].map(x => ({
+        id: x.id, 
+        title: x.title, 
+        channel: x.uploaderName, 
+        channelId: (x.uploaderUrl||'').replace('/channel/',''),
+        thumb: x.thumbnail, 
+        avatar: x.uploaderAvatar,
+        duration: x.duration, 
+        views: x.views, 
+        uploaded: x.uploaded || Date.now(), 
+        cat: x._cat
+      }));
+
+      // Basic transparent scoring
+      // Boost fresh content
+      combined.forEach(item => {
+        let score = 0;
+        const historyIds = history.map(h => h.id);
+        if (historyIds.includes(item.id)) score -= 50; // Penalty for recently watched
+        if (item.cat === 'Trending') score += 10;
+        
+        // freshness (rough heuristic)
+        if (typeof item.uploaded === 'number') {
+           const ageDays = (Date.now() - item.uploaded) / (1000 * 60 * 60 * 24);
+           if (ageDays < 7) score += 20;
+        }
+        item._score = score;
+      });
+      
+      combined.sort((a, b) => b._score - a._score);
+      
+      feedCache = combined;
+      this.lastRefresh = Date.now();
+      
+      feed = activeCategory === 'All' ? feedCache : feedCache.filter(x => x.cat === activeCategory);
+    } catch(e) { 
+      showToast('Could not load feed. Using offline cache if available.'); 
+    } finally {
+      this.isRefreshing = false;
+      feedLoading = false; 
+      render();
+    }
+  }
+};
+
+async function loadFeed(force = false) {
+  return feedManager.loadFeed(force);
 }
 
 // Search Logic
@@ -209,10 +331,81 @@ function scoreResult(item, q) {
   return score;
 }
 
+const searchManager = {
+  controller: null,
+  isSearching: false,
+  cache: new Map(),
+
+  async runSearch(query) {
+    if (this.controller) this.controller.abort();
+    this.controller = new AbortController();
+    
+    if (!query) { searchResults = []; render(); return; }
+    
+    // Check cache
+    if (this.cache.has(query)) {
+      searchResults = this.cache.get(query);
+      render();
+      return;
+    }
+
+    this.isSearching = true;
+    feedLoading = true;
+    render();
+
+    try {
+      const [rel, recent] = await Promise.allSettled([
+        API.request(`/search?q=${encodeURIComponent(query)}&filter=videos`, { signal: this.controller.signal }),
+        API.request(`/search?q=${encodeURIComponent(query)}&filter=videos&sort_by=upload_date`, { signal: this.controller.signal })
+      ]);
+
+      const all = [];
+      for (const r of [rel, recent]) {
+        if (r.status === 'fulfilled') {
+          const items = Array.isArray(r.value) ? r.value : (r.value?.items || []);
+          all.push(...items);
+        }
+      }
+
+      const deduped = new Map();
+      for (const x of all) {
+        const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
+        if (!id || deduped.has(id)) continue;
+        deduped.set(id, x);
+      }
+
+      const results = [...deduped.values()].map(x => ({
+        id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1],
+        title: x.title || 'Untitled',
+        channel: x.uploaderName || 'Unknown',
+        channelId: (x.uploaderUrl||'').replace('/channel/',''),
+        thumb: x.thumbnail || '',
+        avatar: x.uploaderAvatar || '',
+        duration: x.duration || 0,
+        views: x.views || 0,
+        uploaded: x.uploaded || Date.now()
+      })).filter(x => x.id).sort((a,b) => scoreResult(b, query) - scoreResult(a, query)).slice(0,24);
+      
+      this.cache.set(query, results);
+      searchResults = results;
+    } catch(err) {
+      if (err.name !== 'AbortError') {
+        showToast('Search unavailable');
+        searchResults = [];
+      }
+    } finally {
+      if (this.controller && !this.controller.signal.aborted) {
+         this.isSearching = false;
+         feedLoading = false;
+         render();
+      }
+    }
+  }
+};
+
 async function runSearch(q) {
   const query = (q || '').trim();
   searchQuery = query;
-  if (!query) { searchResults = []; render(); return; }
   
   const pastedId = extractVideoId(query);
   if (pastedId) {
@@ -225,43 +418,7 @@ async function runSearch(q) {
     return;
   }
   
-  feedLoading = true; render();
-  try {
-    const [rel, recent] = await Promise.allSettled([
-      fetchPiped(`/search?q=${encodeURIComponent(query)}&filter=videos`),
-      fetchPiped(`/search?q=${encodeURIComponent(query)}&filter=videos&sort_by=upload_date`)
-    ]);
-    const all = [];
-    for (const r of [rel, recent]) {
-      if (r.status === 'fulfilled') {
-        const items = Array.isArray(r.value) ? r.value : (r.value?.items || []);
-        all.push(...items);
-      }
-    }
-    const deduped = new Map();
-    for (const x of all) {
-      const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
-      if (!id || deduped.has(id)) continue;
-      deduped.set(id, x);
-    }
-    searchResults = [...deduped.values()].map(x => ({
-      id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1],
-      title: x.title || 'Untitled',
-      channel: x.uploaderName || 'Unknown',
-      channelId: (x.uploaderUrl||'').replace('/channel/',''),
-      thumb: x.thumbnail || '',
-      avatar: x.uploaderAvatar || '',
-      duration: x.duration || 0,
-      views: x.views || 0,
-      uploaded: x.uploaded || Date.now()
-    })).filter(x => x.id).sort((a,b) => scoreResult(b, query) - scoreResult(a, query)).slice(0,24);
-  } catch(_) {
-    showToast('Search unavailable');
-    searchResults = [];
-  } finally {
-    feedLoading = false;
-    render();
-  }
+  return searchManager.runSearch(query);
 }
 
 // Formatting Helpers
@@ -315,6 +472,24 @@ function renderVideo(v, isCompact) {
   </div>`;
 }
 
+function getSkeletonGrid(count = 12) {
+  return `<div class="skel-grid">
+    ${Array(count).fill(0).map(() => `
+      <div class="skel-video-card">
+        <div class="skeleton skel-thumb"></div>
+        <div class="skel-card-info">
+          <div class="skeleton skel-avatar"></div>
+          <div class="skel-card-meta">
+            <div class="skeleton skel-title"></div>
+            <div class="skeleton skel-text"></div>
+            <div class="skeleton skel-text short"></div>
+          </div>
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
 function viewHome() {
   const cats = ['All', 'Tech', 'Education', 'Music', 'Movies', 'Gaming'];
   const catHtml = `<div class="category-bar">${cats.map(c => `<button class="category-chip ${activeCategory === c ? 'active':''}" data-action="cat" data-val="${c}">${c}</button>`).join('')}</div>`;
@@ -326,7 +501,7 @@ function viewHome() {
   
   if (searchQuery) {
     const resultsHtml = feedLoading 
-      ? '<div style="padding:40px;text-align:center;">Searching...</div>'
+      ? `<h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Searching...</h2>` + getSkeletonGrid(8)
       : `<h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Search Results for "${esc(searchQuery)}"</h2>
          <div class="video-grid" style="margin-bottom: 32px;">${searchResults.map(r => renderVideo(r)).join('')}</div>
          <h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Suggested</h2>`;
@@ -334,8 +509,41 @@ function viewHome() {
     const feedHtml = feedLoading ? '' : `<div class="video-grid">${feed.map(f => renderVideo(f)).join('')}</div>`;
     return `<div>${searchHtml}${catHtml}${resultsHtml}${feedHtml}</div>`;
   } else {
-    let content = feedLoading ? '<div style="padding:40px;text-align:center;">Loading...</div>' : `<div class="video-grid">${feed.map(f => renderVideo(f)).join('')}</div>`;
+    let content = feedLoading ? getSkeletonGrid(12) : `<div class="video-grid">${feed.map(f => renderVideo(f)).join('')}</div>`;
     return `<div>${searchHtml}${catHtml}${content}</div>`;
+  }
+}
+
+let watchLoading = false;
+let watchDetailsCache = new Map();
+
+async function fetchVideoDetails(id) {
+  if (watchDetailsCache.has(id)) return watchDetailsCache.get(id);
+  try {
+    const data = await API.request(`/streams/${id}`);
+    const details = {
+      id: id,
+      title: data.title,
+      channel: data.uploader,
+      channelId: (data.uploaderUrl||'').replace('/channel/',''),
+      avatar: data.uploaderAvatar,
+      views: data.views,
+      uploaded: data.uploadDate,
+      description: data.description || '',
+      related: (data.relatedStreams || []).map(x => ({
+        id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1] || x.videoId,
+        title: x.title,
+        channel: x.uploaderName,
+        thumb: x.thumbnail,
+        duration: x.duration,
+        views: x.views,
+        uploaded: x.uploaded
+      })).filter(x => x.id).slice(0, 15)
+    };
+    watchDetailsCache.set(id, details);
+    return details;
+  } catch (err) {
+    return null;
   }
 }
 
@@ -353,11 +561,22 @@ function viewWatch() {
     </div></div>`;
   }
 
-  const meta = feedCache.find(f => f.id === currentVideoId) || searchResults.find(r => r.id === currentVideoId) || { title: 'Video Details', channel: 'YouTube Curated' };
+  const cachedMeta = feedCache.find(f => f.id === currentVideoId) || searchResults.find(r => r.id === currentVideoId);
+  const meta = watchDetailsCache.get(currentVideoId) || cachedMeta || { title: 'Loading details...', channel: 'Loading...', loading: true };
+  
+  if (meta.loading && !watchLoading) {
+    watchLoading = true;
+    fetchVideoDetails(currentVideoId).then(details => {
+      watchLoading = false;
+      if (details) render();
+    }).catch(() => { watchLoading = false; });
+  }
+
   const saved = store.isSaved(currentVideoId);
   const liked = store.isLiked(currentVideoId);
   const disliked = store.isDisliked(currentVideoId);
-  const suggestions = feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
+  
+  const relatedVideos = meta.related || feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
   
   return `<div class="watch-page"><div class="watch-layout">
     <div class="player-section">
@@ -390,44 +609,66 @@ function viewWatch() {
           </div>
         </div>
         <div class="video-description">
-          <p><strong>${fmtViews(meta.views || 4500)} • ${timeAgo(meta.uploaded) || 'Just now'}</strong></p>
-          <p style="margin-top:8px">Clean, tracker-free player presentation on PawTube frontend environment.</p>
+          <p><strong>${fmtViews(meta.views || 4500)} ${meta.uploaded ? `• ${timeAgo(meta.uploaded) || meta.uploaded}` : ''}</strong></p>
+          <p style="margin-top:8px; white-space: pre-wrap; word-break: break-word;">${meta.description ? esc(meta.description.substring(0, 300)) + (meta.description.length > 300 ? '...' : '') : 'Clean, tracker-free player presentation on PawTube frontend environment.'}</p>
         </div>
       </div>
     </div>
     <div class="related-section">
-      ${suggestions.map(s => renderVideo(s, true)).join('')}
+      ${watchLoading && !meta.related ? getSkeletonGrid(6) : relatedVideos.map(s => renderVideo(s, true)).join('')}
     </div>
   </div></div>`;
 }
 
 function viewHistory() {
-  const items = store.get(STORAGE.HISTORY).map(h => {
-    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || { title: `Video ${h.id}`, channel: 'Playback History', id: h.id };
-    return renderVideo(f, true);
+  const historyData = store.get(STORAGE.HISTORY);
+  const items = historyData.map(h => {
+    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: 'Playback History', id: h.id };
+    const rendered = renderVideo(f, true);
+    // Inject remove button into the related-card
+    return rendered.replace('</div>\n    </div>', `<button class="icon-btn" style="position:absolute; right:8px; top:8px; width:32px; height:32px; background:rgba(0,0,0,0.6);" data-action="remove-history" data-id="${f.id}"><span class="material-symbols-rounded" style="font-size:18px;">close</span></button></div>\n    </div>`).replace('class="related-card"', 'class="related-card" style="position:relative;"');
   });
   if (!items.length) return `<div class="empty-state"><span class="material-symbols-rounded">history</span><h2>Keep track of what you watch</h2><p style="margin-top:8px">Your local history buffer is currently blank.</p></div>`;
-  return `<div><h1 class="section-title" style="margin-bottom:24px">Watch History</h1><div class="related-list" style="max-width:800px">${items.join('')}</div></div>`;
+  return `<div>
+    <div class="section-header">
+      <h1 class="section-title">Watch History</h1>
+      <button class="pill-btn" data-action="clear-history" style="height:32px; font-size:13px; color:var(--text-secondary);"><span class="material-symbols-rounded" style="font-size:18px;">delete</span>Clear all</button>
+    </div>
+    <div class="related-list" style="max-width:800px">${items.join('')}</div>
+  </div>`;
 }
 
 let subsChannelVideos = {};
 let subsLoading = false;
+let activeChannelFetches = new Map();
 
 async function fetchChannelVideos(channelId) {
   if (subsChannelVideos[channelId]) return subsChannelVideos[channelId];
+  if (activeChannelFetches.has(channelId)) return activeChannelFetches.get(channelId);
+  
   const sub = store.getSubs().find(s => s.id === channelId);
   if (!sub) return [];
-  try {
-    const data = await fetchPiped(`/search?q=${encodeURIComponent(sub.name)}&filter=videos`);
-    const items = (data.items || []).map(x => {
-      const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
-      const xChannelId = (x.uploaderUrl||'').replace('/channel/','');
-      if (!id || xChannelId !== channelId) return null;
-      return { id, title: x.title, channel: x.uploaderName, channelId: xChannelId, thumb: x.thumbnail, avatar: x.uploaderAvatar, duration: x.duration, views: x.views, uploaded: x.uploaded };
-    }).filter(Boolean);
-    subsChannelVideos[channelId] = items;
-    return items;
-  } catch { return []; }
+  
+  const fetchPromise = (async () => {
+    try {
+      const data = await API.request(`/search?q=${encodeURIComponent(sub.name)}&filter=videos`);
+      const items = (data.items || []).map(x => {
+        const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
+        const xChannelId = (x.uploaderUrl||'').replace('/channel/','');
+        if (!id || xChannelId !== channelId) return null;
+        return { id, title: x.title, channel: x.uploaderName, channelId: xChannelId, thumb: x.thumbnail, avatar: x.uploaderAvatar, duration: x.duration, views: x.views, uploaded: x.uploaded };
+      }).filter(Boolean);
+      subsChannelVideos[channelId] = items;
+      return items;
+    } catch { 
+      return []; 
+    } finally {
+      activeChannelFetches.delete(channelId);
+    }
+  })();
+  
+  activeChannelFetches.set(channelId, fetchPromise);
+  return fetchPromise;
 }
 
 function viewSubscriptions() {
@@ -449,8 +690,8 @@ function viewSubscriptions() {
     ? `<h2 class="section-title" style="margin-bottom:16px;font-size:18px;">Latest from Subscriptions</h2>
        <div class="video-grid">${allVideos.map(v => renderVideo(v)).join('')}</div>`
     : subsLoading 
-      ? '<div style="padding:40px;text-align:center;">Loading videos...</div>'
-      : '<div style="padding:20px;text-align:center;color:var(--text-secondary);">No videos found for your subscriptions yet.</div>';
+      ? `<h2 class="section-title" style="margin-bottom:16px;font-size:18px;">Latest from Subscriptions</h2>` + getSkeletonGrid(8)
+      : '<div class="empty-state" style="padding:40px;"><span class="material-symbols-rounded">movie</span><h2>No recent videos</h2><p style="margin-top:8px">Channels you subscribed to haven\'t posted anything recently.</p></div>';
   
   return `<div>
     <div class="subs-header"><span class="material-symbols-rounded">subscriptions</span><h1 class="section-title" style="font-size:22px;">Subscriptions</h1></div>
@@ -461,7 +702,7 @@ function viewSubscriptions() {
 
 function viewSaved() {
   const items = store.get(STORAGE.SAVED).map(h => {
-    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || { title: `Video ${h.id}`, channel: 'Saved Reference', id: h.id };
+    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: 'Saved Reference', id: h.id };
     return renderVideo(f, true);
   });
   if (!items.length) return `<div class="empty-state"><span class="material-symbols-rounded">bookmark</span><h2>No saved videos</h2><p style="margin-top:8px">Bookmark links to access later on demand.</p></div>`;
@@ -472,7 +713,8 @@ function render() {
   const h = location.hash.replace('#', '') || '/home';
   route = ['home','watch','history','saved','subscriptions'].includes(h.slice(1)) ? h.slice(1) : 'home';
   
-  $$('[data-route]').forEach(el => el.classList.toggle('active', el.dataset.route === '/'+route));
+  $$('.nav-item, .bnav-item').forEach(el => el.classList.remove('active'));
+  $$(`[data-route="/${route}"]`).forEach(el => el.classList.add('active'));
   
   const main = $('#main-content');
   if(route === 'home') { main.innerHTML = viewHome(); }
@@ -553,6 +795,20 @@ document.addEventListener('click', e => {
     if (act === 'share' && currentVideoId) { e.stopPropagation(); doShare(); }
     if (act === 'like' && currentVideoId) { e.stopPropagation(); store.toggleLike(currentVideoId); updateActionButtons(); }
     if (act === 'dislike' && currentVideoId) { e.stopPropagation(); store.toggleDislike(currentVideoId); updateActionButtons(); }
+    
+    if (act === 'remove-history') {
+      e.stopPropagation();
+      if (id) {
+        store.removeHistory(id);
+        render();
+      }
+    }
+    
+    if (act === 'clear-history') {
+      e.stopPropagation();
+      store.clearHistory();
+      render();
+    }
     
     if (act === 'unsub') {
       e.stopPropagation();
