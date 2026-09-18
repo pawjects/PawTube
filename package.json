@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node server.js",
     "build": "echo 'No build required'",
-    "start": "node server.js"
+    "start": "node server.js",
+    "lint": "node -c docs/api.js && node -c docs/app.js && node -c docs/player.js && node -c server.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

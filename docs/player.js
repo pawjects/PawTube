@@ -1,6 +1,6 @@
 class CustomPlayer {
   constructor() {
-    this.player = null;
+    this.videoEl = null;
     this.wrapper = null;
     this.uiTimeout = null;
     this.isDragging = false;
@@ -11,24 +11,19 @@ class CustomPlayer {
     // Create UI elements
     this.initDOM();
     this.bindEvents();
-    
-    window.onYouTubeIframeAPIReady = () => {
-      this.apiReady = true;
-      if (this.pendingVideoId) {
-        this.loadVideo(this.pendingVideoId);
-        this.pendingVideoId = null;
-      }
-    };
+    this.apiReady = true; // No need to wait for external API
   }
   
   initDOM() {
     this.wrapper = document.createElement('div');
     this.wrapper.className = 'custom-player-wrapper idle';
     this.wrapper.innerHTML = `
-       <div id="yt-player-container"></div>
+       <div id="yt-player-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000;">
+         <video id="html5-video-player" playsinline style="width: 100%; height: 100%; object-fit: contain;"></video>
+       </div>
        <div class="player-click-layer"></div>
        <div class="custom-player-ui" id="custom-player-ui">
-           <div class="player-loading-spinner" id="player-loading-spinner"><span class="material-symbols-rounded spinner-icon">progress_activity</span></div>
+           <div class="player-loading-spinner" id="player-loading-spinner" style="display: none;"><span class="material-symbols-rounded spinner-icon">progress_activity</span></div>
            <div class="player-center-play" id="player-center-play"><span class="material-symbols-rounded" style="font-size: 48px;">play_arrow</span></div>
            
            <div class="player-bottom-controls" id="player-bottom-controls">
@@ -52,7 +47,7 @@ class CustomPlayer {
                         <div class="player-time-display" id="player-time-display">0:00 / 0:00</div>
                     </div>
                     <div class="player-controls-right">
-                        <button class="player-btn" id="player-cc-btn" aria-label="Subtitles/CC"><span class="material-symbols-rounded">closed_caption</span></button>
+                        <button class="player-btn" id="player-cc-btn" aria-label="Subtitles/CC" style="display: none;"><span class="material-symbols-rounded">closed_caption</span></button>
                         
                         <div class="player-settings-container">
                             <button class="player-btn" id="player-settings-btn" aria-label="Settings"><span class="material-symbols-rounded">settings</span></button>
@@ -73,6 +68,7 @@ class CustomPlayer {
     // Expose wrapper globally
     window.playerWrapper = this.wrapper;
     
+    this.videoEl = this.wrapper.querySelector('#html5-video-player');
     this.el = {
       clickLayer: this.wrapper.querySelector('.player-click-layer'),
       playBtn: this.wrapper.querySelector('#player-play-btn'),
@@ -94,6 +90,7 @@ class CustomPlayer {
       pipBtn: this.wrapper.querySelector('#player-pip-btn'),
       theaterBtn: this.wrapper.querySelector('#player-theater-btn'),
       fullscreenBtn: this.wrapper.querySelector('#player-fullscreen-btn'),
+      spinner: this.wrapper.querySelector('#player-loading-spinner'),
     };
     
     // Hide PiP if not supported
@@ -103,16 +100,20 @@ class CustomPlayer {
     
     // Load saved preferences
     const savedVol = localStorage.getItem('pt_volume');
-    if (savedVol !== null) this.el.volumeSlider.value = savedVol;
+    if (savedVol !== null) {
+        this.el.volumeSlider.value = savedVol;
+        this.videoEl.volume = savedVol / 100;
+        this.updateVolumeUI();
+    }
   }
 
   bindEvents() {
     // Mouse movement to show/hide controls
     this.wrapper.addEventListener('mousemove', (e) => {
       this.showControls();
-      if (!this.wrapper.classList.contains('paused')) {
+      if (!this.videoEl.paused) {
         clearTimeout(this.uiTimeout);
-        this.uiTimeout = setTimeout(() => this.hideControls(), 2500);
+        this.uiTimeout = setTimeout(() => this.hideControls(), 3000);
       }
       
       // Update progress hover
@@ -122,8 +123,8 @@ class CustomPlayer {
          let percent = x / rect.width;
          this.el.progressHover.style.width = (percent * 100) + '%';
          
-         if (this.player && this.player.getDuration) {
-           const time = percent * this.player.getDuration();
+         if (this.videoEl.duration) {
+           const time = percent * this.videoEl.duration;
            this.el.timeTooltip.textContent = this.formatTime(time);
            this.el.timeTooltip.style.display = 'block';
            this.el.timeTooltip.style.left = (percent * 100) + '%';
@@ -134,7 +135,7 @@ class CustomPlayer {
     });
     
     this.wrapper.addEventListener('mouseleave', () => {
-      if (!this.wrapper.classList.contains('paused')) {
+      if (!this.videoEl.paused) {
         this.hideControls();
       }
       this.el.timeTooltip.style.display = 'none';
@@ -165,8 +166,8 @@ class CustomPlayer {
       let percent = Math.max(0, Math.min((e.clientX - rect.left) / rect.width, 1));
       this.el.progressFilled.style.width = (percent * 100) + '%';
       this.el.progressThumb.style.left = (percent * 100) + '%';
-      if (this.player && this.player.getDuration) {
-         this.player.seekTo(percent * this.player.getDuration(), true);
+      if (this.videoEl.duration) {
+         this.videoEl.currentTime = percent * this.videoEl.duration;
       }
     };
     this.el.progressContainer.addEventListener('mousedown', (e) => {
@@ -201,11 +202,58 @@ class CustomPlayer {
        }
     });
     
-    // CC
-    this.el.ccBtn.addEventListener('click', () => this.toggleCC());
-    
     // Keyboard
     document.addEventListener('keydown', (e) => this.handleKeydown(e));
+
+    // Video Element Events
+    this.videoEl.addEventListener('play', () => {
+        this.wrapper.classList.remove('paused');
+        this.el.playBtn.innerHTML = '<span class="material-symbols-rounded">pause</span>';
+        this.el.centerPlay.style.display = 'none';
+        clearTimeout(this.uiTimeout);
+        this.uiTimeout = setTimeout(() => this.hideControls(), 3000);
+    });
+    this.videoEl.addEventListener('pause', () => {
+        clearTimeout(this.uiTimeout);
+        this.wrapper.classList.add('paused');
+        this.el.playBtn.innerHTML = '<span class="material-symbols-rounded">play_arrow</span>';
+        this.el.centerPlay.innerHTML = '<span class="material-symbols-rounded">play_arrow</span>';
+        this.el.centerPlay.style.display = 'flex';
+        this.showControls();
+    });
+    this.videoEl.addEventListener('ended', () => {
+        clearTimeout(this.uiTimeout);
+        this.wrapper.classList.add('paused');
+        this.el.playBtn.innerHTML = '<span class="material-symbols-rounded">play_arrow</span>';
+        this.el.centerPlay.innerHTML = '<span class="material-symbols-rounded">replay</span>';
+        this.el.centerPlay.style.display = 'flex';
+        this.showControls();
+    });
+    this.videoEl.addEventListener('enterpictureinpicture', () => {
+        this.el.pipBtn.innerHTML = '<span class="material-symbols-rounded">picture_in_picture</span>';
+    });
+    this.videoEl.addEventListener('leavepictureinpicture', () => {
+        this.el.pipBtn.innerHTML = '<span class="material-symbols-rounded">picture_in_picture_alt</span>';
+    });
+    this.videoEl.addEventListener('timeupdate', () => this.updateProgress());
+    this.videoEl.addEventListener('waiting', () => {
+        this.wrapper.classList.add('buffering');
+        this.el.spinner.style.display = 'flex';
+        this.el.centerPlay.style.display = 'none';
+    });
+    this.videoEl.addEventListener('playing', () => {
+        this.wrapper.classList.remove('buffering');
+        this.el.spinner.style.display = 'none';
+    });
+    this.videoEl.addEventListener('progress', () => {
+        if (this.videoEl.duration > 0) {
+            let loaded = 0;
+            for (let i = 0; i < this.videoEl.buffered.length; i++) {
+                loaded = Math.max(loaded, this.videoEl.buffered.end(i));
+            }
+            this.el.progressBuffered.style.width = `${(loaded / this.videoEl.duration) * 100}%`;
+        }
+    });
   }
 
   showControls() {
@@ -217,124 +265,83 @@ class CustomPlayer {
     this.el.settingsMenu.classList.remove('open');
   }
 
-  loadVideo(videoId) {
-    if (!this.apiReady) {
-      this.pendingVideoId = videoId;
-      return;
-    }
-    
+  async loadVideo(videoId) {
     this.currentVideoId = videoId;
     this.wrapper.classList.add('buffering');
+    this.el.spinner.style.display = 'flex';
+    this.el.centerPlay.style.display = 'none';
     
-    if (this.player) {
-      this.player.loadVideoById(videoId);
-    } else {
-      this.player = new YT.Player('yt-player-container', {
-        videoId: videoId,
-        playerVars: {
-          controls: 0,
-          disablekb: 1,
-          modestbranding: 1,
-          rel: 0,
-          showinfo: 0,
-          iv_load_policy: 3,
-          autoplay: 1,
-          playsinline: 1,
-          origin: window.location.origin
-        },
-        events: {
-          onReady: (e) => this.onPlayerReady(e),
-          onStateChange: (e) => this.onStateChange(e),
-          onError: (e) => this.onError(e)
+    try {
+        const res = await window.PawTubeAPI.getVideoInfo(videoId);
+        const info = res.video || res;
+        const instance = res.instance || "";
+        this.currentInstance = res.instance || "";
+        this.currentProvider = res.provider || "piped";
+        
+        this.currentStreams = info.streams || info.formatStreams || [];
+        
+        // Prefer 720p mp4, fallback to anything else
+        let bestStream = this.currentStreams.find(s => (s.quality === '720p' || s.resolution === '720p') && (s.mimeType || s.container || '').includes('mp4') && s.hasAudio) 
+            || this.currentStreams.find(s => (s.quality === '360p' || s.resolution === '360p') && (s.mimeType || s.container || '').includes('mp4') && s.hasAudio)
+            || this.currentStreams.find(s => (s.mimeType || '').includes('mp4') && s.hasAudio)
+            || this.currentStreams[0];
+
+        if (bestStream && bestStream.url) {
+            this.currentQuality = bestStream.quality || bestStream.resolution || 'Auto';
+            let streamUrl = bestStream.url;
+            
+            // Re-route proxy to the healthy this.currentInstance chosen by unified backend
+            if (this.currentInstance && !streamUrl.startsWith('http')) {
+               streamUrl = this.currentInstance + streamUrl;
+            }
+            this.videoEl.src = streamUrl;
+            this.videoEl.play().catch(e => console.warn('Auto-play prevented:', e));
+        } else {
+            throw new Error('No compatible video streams found.');
         }
-      });
+    } catch (e) {
+        console.error('Failed to load video stream:', e);
+        this.wrapper.classList.remove('buffering');
+        this.el.spinner.style.display = 'none';
+        window.showToast?.("Upstream API Error (Instances may be blocked by YouTube)");
     }
-  }
-
-  onPlayerReady(event) {
-    // Apply saved volume
-    const savedVol = localStorage.getItem('pt_volume');
-    if (savedVol !== null) {
-      this.player.setVolume(parseInt(savedVol));
-    }
-    this.updateVolumeUI();
-    
-    // Start progress loop
-    if (this.progressInterval) clearInterval(this.progressInterval);
-    this.progressInterval = setInterval(() => this.updateProgress(), 500);
-    
-    this.player.playVideo();
-  }
-
-  onStateChange(event) {
-    // YT.PlayerState: -1 (unstarted), 0 (ended), 1 (playing), 2 (paused), 3 (buffering), 5 (video cued)
-    this.wrapper.classList.remove('buffering');
-    
-    if (event.data === YT.PlayerState.PLAYING) {
-      this.wrapper.classList.remove('paused');
-      this.el.playBtn.innerHTML = '<span class="material-symbols-rounded">pause</span>';
-      this.el.centerPlay.style.display = 'none';
-      clearTimeout(this.uiTimeout);
-      this.uiTimeout = setTimeout(() => this.hideControls(), 2500);
-    } else if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) {
-      this.wrapper.classList.add('paused');
-      this.el.playBtn.innerHTML = '<span class="material-symbols-rounded">play_arrow</span>';
-      this.el.centerPlay.innerHTML = event.data === YT.PlayerState.ENDED ? '<span class="material-symbols-rounded">replay</span>' : '<span class="material-symbols-rounded">play_arrow</span>';
-      this.el.centerPlay.style.display = 'flex';
-      this.showControls();
-    } else if (event.data === YT.PlayerState.BUFFERING) {
-      this.wrapper.classList.add('buffering');
-    }
-  }
-  
-  onError(e) {
-    this.wrapper.classList.remove('buffering');
-    console.error('Player error:', e.data);
   }
 
   togglePlay() {
-    if (!this.player || !this.player.getPlayerState) return;
-    const state = this.player.getPlayerState();
-    if (state === YT.PlayerState.PLAYING) {
-      this.player.pauseVideo();
+    if (this.videoEl.paused) {
+      this.videoEl.play();
     } else {
-      this.player.playVideo();
+      this.videoEl.pause();
     }
   }
 
   skip(seconds) {
-    if (!this.player || !this.player.getCurrentTime) return;
-    const curr = this.player.getCurrentTime();
-    this.player.seekTo(curr + seconds, true);
+    if (this.videoEl.duration) {
+        this.videoEl.currentTime = Math.min(this.videoEl.duration, Math.max(0, this.videoEl.currentTime + seconds));
+    }
     this.showControls();
   }
 
   toggleMute() {
-    if (!this.player || !this.player.isMuted) return;
-    if (this.player.isMuted()) {
-      this.player.unMute();
-      if (this.player.getVolume() === 0) {
-        this.player.setVolume(100);
+    this.videoEl.muted = !this.videoEl.muted;
+    if (!this.videoEl.muted && this.videoEl.volume === 0) {
+        this.videoEl.volume = 1;
         this.el.volumeSlider.value = 100;
-      }
-    } else {
-      this.player.mute();
+        localStorage.setItem('pt_volume', '100');
     }
     this.updateVolumeUI();
   }
 
   setVolume(vol) {
-    if (!this.player || !this.player.setVolume) return;
-    this.player.unMute();
-    this.player.setVolume(vol);
+    this.videoEl.muted = false;
+    this.videoEl.volume = vol / 100;
     localStorage.setItem('pt_volume', vol);
     this.updateVolumeUI();
   }
 
   updateVolumeUI() {
-    if (!this.player || !this.player.isMuted) return;
-    const muted = this.player.isMuted();
-    const vol = this.player.getVolume();
+    const muted = this.videoEl.muted;
+    const vol = this.videoEl.volume * 100;
     this.el.volumeSlider.value = muted ? 0 : vol;
     
     let icon = 'volume_up';
@@ -365,54 +372,32 @@ class CustomPlayer {
   }
 
   async togglePiP() {
-    // Attempt PiP on the iframe wrapper... actually PiP API requires a video element.
-    // If the browser doesn't expose it across origins, we might fail gracefully.
     try {
-      const video = this.wrapper.querySelector('video'); // May not exist due to cross-origin iframe
-      if (video) {
-        if (document.pictureInPictureElement) {
-          await document.exitPictureInPicture();
-        } else {
-          await video.requestPictureInPicture();
-        }
+      if (!document.pictureInPictureEnabled) {
+        window.showToast?.("PiP is not supported in this browser or iframe");
+        return;
+      }
+      
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
       } else {
-         window.showToast?.("PiP not fully supported for this player");
+        await this.videoEl.requestPictureInPicture();
       }
     } catch(err) {
        console.error("PiP error:", err);
-       window.showToast?.("PiP not supported");
+       window.showToast?.("Picture-in-Picture failed. Try opening the app in a new tab.");
     }
   }
 
-  toggleCC() {
-     if (!this.player) return;
-     try {
-       // A quick toggle if tracks exist
-       const tracks = this.player.getOption('captions', 'tracklist') || [];
-       if (tracks.length > 0) {
-         this.player.loadModule('captions');
-         this.player.setOption('captions', 'track', { languageCode: tracks[0].languageCode });
-         window.showToast?.("Captions enabled");
-       } else {
-         this.player.loadModule('captions');
-         this.player.setOption('captions', 'track', { languageCode: 'en' });
-         window.showToast?.("Captions enabled (English)");
-       }
-     } catch(e) {}
-  }
-
   updateProgress() {
-    if (!this.player || !this.player.getCurrentTime || this.isDragging) return;
-    const curr = this.player.getCurrentTime();
-    const dur = this.player.getDuration() || 0;
+    if (this.isDragging) return;
+    const curr = this.videoEl.currentTime || 0;
+    const dur = this.videoEl.duration || 0;
     const fraction = dur > 0 ? (curr / dur) * 100 : 0;
     
     this.el.progressFilled.style.width = `${fraction}%`;
     this.el.progressThumb.style.left = `${fraction}%`;
     this.el.timeDisplay.textContent = `${this.formatTime(curr)} / ${this.formatTime(dur)}`;
-    
-    const loaded = this.player.getVideoLoadedFraction();
-    this.el.progressBuffered.style.width = `${loaded * 100}%`;
   }
 
   formatTime(seconds) {
@@ -438,16 +423,16 @@ class CustomPlayer {
       case 'l': this.skip(10); break;
       case 'arrowleft': this.skip(-5); break;
       case 'arrowright': this.skip(5); break;
-      case 'arrowup': e.preventDefault(); this.setVolume(Math.min(100, (this.player?.getVolume()||0) + 5)); break;
-      case 'arrowdown': e.preventDefault(); this.setVolume(Math.max(0, (this.player?.getVolume()||0) - 5)); break;
+      case 'arrowup': e.preventDefault(); this.setVolume(Math.min(100, (this.videoEl.volume * 100) + 5)); break;
+      case 'arrowdown': e.preventDefault(); this.setVolume(Math.max(0, (this.videoEl.volume * 100) - 5)); break;
       case 'm': this.toggleMute(); break;
       case 'f': this.toggleFullscreen(); break;
       case 't': this.toggleTheater(); break;
       case '0': 
       case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':
-          if (this.player && this.player.getDuration) {
+          if (this.videoEl.duration) {
               const p = parseInt(key) / 10;
-              this.player.seekTo(this.player.getDuration() * p, true);
+              this.videoEl.currentTime = this.videoEl.duration * p;
           }
           break;
     }
@@ -458,45 +443,18 @@ class CustomPlayer {
      let html = '';
      if (state === 'main') {
         html = `
-          <div class="player-menu-item" onclick="customPlayer.renderSettingsMenu('captions')">
-             <span>Subtitles/CC</span>
-             <span class="material-symbols-rounded">chevron_right</span>
-          </div>
           <div class="player-menu-item" onclick="customPlayer.renderSettingsMenu('speed')">
              <span>Playback Speed</span>
              <span class="material-symbols-rounded">chevron_right</span>
           </div>
           <div class="player-menu-item" onclick="customPlayer.renderSettingsMenu('quality')">
-             <span>Quality</span>
+             <span>Quality (${this.currentQuality || 'Auto'})</span>
              <span class="material-symbols-rounded">chevron_right</span>
           </div>
         `;
-     } else if (state === 'captions') {
-        html = `<div class="player-menu-header" onclick="customPlayer.renderSettingsMenu('main')">
-                  <span class="material-symbols-rounded">arrow_back</span> Subtitles/CC
-                </div>`;
-        html += `<div class="player-menu-item" onclick="customPlayer.setCaption('')">
-                    <span>Off</span>
-                 </div>`;
-        let tracks = [];
-        try {
-           tracks = this.player?.getOption('captions', 'tracklist') || [];
-        } catch(e) {}
-        
-        if (tracks.length === 0) {
-           html += `<div class="player-menu-item" onclick="customPlayer.setCaption('en')">
-                      <span>English (Auto-generated/Default)</span>
-                    </div>`;
-        } else {
-           tracks.forEach(t => {
-              html += `<div class="player-menu-item" onclick="customPlayer.setCaption('${t.languageCode}')">
-                        <span>${t.languageName || t.displayName || t.languageCode}</span>
-                      </div>`;
-           });
-        }
      } else if (state === 'speed') {
-        const rates = this.player?.getAvailablePlaybackRates() || [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-        const curr = this.player?.getPlaybackRate() || 1;
+        const rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+        const curr = this.videoEl.playbackRate || 1;
         html = `<div class="player-menu-header" onclick="customPlayer.renderSettingsMenu('main')">
                   <span class="material-symbols-rounded">arrow_back</span> Speed
                 </div>`;
@@ -507,48 +465,67 @@ class CustomPlayer {
                     </div>`;
         });
      } else if (state === 'quality') {
-        const levels = this.player?.getAvailableQualityLevels() || ['auto'];
-        const curr = this.player?.getPlaybackQuality() || 'auto';
         html = `<div class="player-menu-header" onclick="customPlayer.renderSettingsMenu('main')">
                   <span class="material-symbols-rounded">arrow_back</span> Quality
                 </div>`;
-        levels.forEach(q => {
-           let label = q;
-           if (q === 'hd1080') label = '1080p';
-           if (q === 'hd720') label = '720p';
-           if (q === 'large') label = '480p';
-           if (q === 'medium') label = '360p';
-           if (q === 'small') label = '240p';
-           if (q === 'tiny') label = '144p';
-           if (q === 'highres') label = '4K';
-           html += `<div class="player-menu-item" onclick="customPlayer.setQuality('${q}')">
-                      <span style="text-transform:capitalize">${label}</span>
-                      ${q === curr ? '<span class="material-symbols-rounded">check</span>' : ''}
-                    </div>`;
-        });
+        if (this.currentStreams && this.currentStreams.length > 0) {
+            // Get unique resolutions preferring mp4 container
+            const uniqueRes = [];
+            const seen = new Set();
+            this.currentStreams.forEach(s => {
+                if ((s.resolution || s.quality) && !seen.has(s.resolution || s.quality)) {
+                    seen.add(s.resolution || s.quality);
+                    uniqueRes.push(s);
+                }
+            });
+            // Sort by numerical resolution descending
+            uniqueRes.sort((a, b) => {
+                const numA = parseInt(a.resolution || a.quality) || 0;
+                const numB = parseInt(b.resolution || b.quality) || 0;
+                return numB - numA;
+            });
+            uniqueRes.forEach(s => {
+               html += `<div class="player-menu-item" onclick="customPlayer.setQuality('${s.resolution || s.quality}')">
+                          <span>${s.resolution || s.quality}</span>
+                          ${(s.resolution || s.quality) === this.currentQuality ? '<span class="material-symbols-rounded">check</span>' : ''}
+                        </div>`;
+            });
+        } else {
+            html += `<div class="player-menu-item"><span>Auto</span></div>`;
+        }
      }
      this.el.settingsMenu.innerHTML = html;
   }
   
   setSpeed(speed) {
-    if (this.player) this.player.setPlaybackRate(speed);
-    this.el.settingsMenu.classList.remove('open');
-  }
-  
-  setQuality(q) {
-    if (this.player) this.player.setPlaybackQuality(q);
+    this.videoEl.playbackRate = speed;
     this.el.settingsMenu.classList.remove('open');
   }
 
-  setCaption(lang) {
-    if (!this.player) return;
-    if (lang) {
-      this.player.loadModule('captions');
-      this.player.setOption('captions', 'track', { languageCode: lang });
-      window.showToast?.(`Captions set to ${lang}`);
-    } else {
-      this.player.unloadModule('captions');
-      window.showToast?.('Captions disabled');
+  setQuality(resolution) {
+    if (!this.currentStreams || this.currentQuality === resolution) return;
+    
+    // Find best stream for this resolution
+    let stream = this.currentStreams.find(s => (s.resolution === resolution || s.quality === resolution) && s.container === 'mp4') 
+              || this.currentStreams.find(s => (s.resolution === resolution || s.quality === resolution));
+              
+    if (stream && stream.url) {
+        const currentTime = this.videoEl.currentTime;
+        const isPaused = this.videoEl.paused;
+        const playbackRate = this.videoEl.playbackRate;
+        
+        this.currentQuality = resolution;
+        
+        let streamUrl = stream.url;
+        
+        
+        this.videoEl.src = streamUrl;
+        this.videoEl.playbackRate = playbackRate;
+        this.videoEl.currentTime = currentTime;
+        
+        if (!isPaused) {
+            this.videoEl.play().catch(e => console.warn('Auto-play prevented on quality change:', e));
+        }
     }
     this.el.settingsMenu.classList.remove('open');
   }

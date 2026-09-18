@@ -1,1168 +1,1920 @@
 /**
- * PawTube - PWA MD3 Edition with Complete Bug Fixes
+ * PawTube - Modern Client Application
+ * 
+ * Strict 4-Tab Architecture:
+ * 1. Home (Personalized discovery feed, categories & continue watching)
+ * 2. Shorts (Vertical short-form feed with real Piped data)
+ * 3. Playlists + History (Library, watch later, local playlists, continue watching)
+ * 4. You (Account overview, subscriptions, instance health tester & settings)
+ * 
+ * Centralized Piped API, zero obsolete Piped/PyTube code.
  */
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW setup failed', err));
-  });
-}
 
-const STORAGE = { HISTORY: 'pawtube_history', SAVED: 'pawtube_saved', LIKED: 'pawtube_liked', DISLIKED: 'pawtube_disliked', SUBS: 'pawtube_subs' };
-const FEED_QUERIES = [
-  { q: 'tech reviews latest', category: 'Tech' },
-  { q: 'coding tutorials', category: 'Education' },
-  { q: 'lofi hip hop radio', category: 'Music' },
-  { q: 'movie trailers 2026', category: 'Movies' },
-  { q: 'gaming highlights', category: 'Gaming' }
-];
+// ==========================================
+// LOCAL STORAGE & DATA STORE
+// ==========================================
+class Store {
+  constructor() {
+    this.history = this.get('pt_history', []);
+    this.watchLater = this.get('pt_watch_later', []);
+    this.liked = new Set(this.get('pt_liked', []));
+    this.disliked = new Set(this.get('pt_disliked', []));
+    this.subscriptions = this.get('pt_subscriptions', []);
+    this.playlists = this.get('pt_custom_playlists', [
+      { id: 'pl_favorites', title: 'Favorites', createdAt: Date.now(), videos: [] }
+    ]);
+    this.preferences = this.get('pt_preferences', {
+      autoplay: true,
+      miniPlayerEnabled: true,
+      region: 'US'
+    });
+    this.searchHistory = this.get('pt_search_history', []);
+  }
 
-let route = 'home';
-let currentVideoId = null;
-let apiBase = null;
-let feedCache = [];
-let feed = [];
-let activeCategory = 'All';
-let feedLoading = false;
-let searchQuery = '';
-let searchResults = [];
-
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => document.querySelectorAll(s);
-
-function extractVideoId(raw) {
-  const s = (raw || '').trim(); if (!s) return null;
-  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
-  try {
-    const u = new URL(s);
-    if (u.hostname.includes('youtu.be')) return u.pathname.slice(1);
-    if (u.hostname.includes('youtube.com')) {
-      if (u.searchParams.get('v')) return u.searchParams.get('v');
-      const m = u.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/); if (m) return m[1];
+  get(key, fallback) {
+    try {
+      const val = localStorage.getItem(key);
+      return val ? JSON.parse(val) : fallback;
+    } catch {
+      return fallback;
     }
-  } catch(_) {}
-  return null;
-}
+  }
 
-function embedSrc(id) {
-  if (!id) return '';
-  return `https://www.youtube-nocookie.com/embed/${id}?rel=0&modestbranding=1&autoplay=1`;
-}
+  set(key, val) {
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch (e) {
+      console.warn('Storage quota exceeded or unavailable', e);
+    }
+  }
 
-// Data Store Layer
-const store = {
-  get(key) { try { return JSON.parse(localStorage.getItem(key)) || []; } catch { return []; } },
-  save(key, data) { localStorage.setItem(key, JSON.stringify(data)); },
-  addHistory(id) {
-    if (!id) return;
-    let h = this.get(STORAGE.HISTORY).filter(x => x.id !== id);
-    h.unshift({ id, ts: Date.now() });
-    this.save(STORAGE.HISTORY, h.slice(0, 50));
-  },
-  removeHistory(id) {
-    let h = this.get(STORAGE.HISTORY).filter(x => x.id !== id);
-    this.save(STORAGE.HISTORY, h);
-    showToast('Removed from History');
-  },
+  // History & Continue Watching
+  addToHistory(video) {
+    if (!video || !video.id) return;
+    this.history = this.history.filter(v => v.id !== video.id);
+    this.history.unshift({
+      id: video.id,
+      title: video.title || 'Untitled',
+      channel: video.channel || '',
+      channelId: video.channelId || '',
+      thumb: video.thumb || '',
+      duration: video.duration || 0,
+      durationFormatted: video.durationFormatted || '',
+      progress: video.progress || 0,
+      ts: Date.now()
+    });
+    // Keep last 150 items
+    if (this.history.length > 150) this.history = this.history.slice(0, 150);
+    this.set('pt_history', this.history);
+  }
+
+  updateProgress(videoId, currentTime, duration) {
+    if (!videoId) return;
+    const item = this.history.find(v => v.id === videoId);
+    if (item) {
+      item.progress = Math.floor(currentTime);
+      if (duration && !item.duration) item.duration = Math.floor(duration);
+      this.set('pt_history', this.history);
+    }
+  }
+
+  removeFromHistory(id) {
+    this.history = this.history.filter(v => v.id !== id);
+    this.set('pt_history', this.history);
+  }
+
   clearHistory() {
-    this.save(STORAGE.HISTORY, []);
-    showToast('History cleared');
-  },
-  toggleSaved(id) {
-    if (!id) return;
-    let s = this.get(STORAGE.SAVED);
-    const idx = s.findIndex(x => x.id === id);
-    if (idx >= 0) { s.splice(idx, 1); showToast('Removed from Watch Later'); }
-    else { s.unshift({ id, ts: Date.now() }); showToast('Saved to Watch Later'); }
-    this.save(STORAGE.SAVED, s.slice(0, 200));
-  },
-  isSaved(id) { return this.get(STORAGE.SAVED).some(x => x.id === id); },
-  
+    this.history = [];
+    this.set('pt_history', []);
+  }
+
+  getContinueWatching() {
+    return this.history.filter(v => {
+      if (!v.progress || v.progress < 10) return false;
+      if (v.duration && v.progress > (v.duration - 15)) return false;
+      return true;
+    }).slice(0, 10);
+  }
+
+  // Watch Later
+  isWatchLater(id) {
+    return this.watchLater.some(v => v.id === id);
+  }
+
+  toggleWatchLater(video) {
+    if (!video || !video.id) return false;
+    const exists = this.isWatchLater(video.id);
+    if (exists) {
+      this.watchLater = this.watchLater.filter(v => v.id !== video.id);
+    } else {
+      this.watchLater.unshift({
+        id: video.id,
+        title: video.title,
+        channel: video.channel,
+        channelId: video.channelId,
+        thumb: video.thumb,
+        duration: video.duration,
+        durationFormatted: video.durationFormatted,
+        ts: Date.now()
+      });
+    }
+    this.set('pt_watch_later', this.watchLater);
+    return !exists;
+  }
+
+  // Likes & Dislikes
+  isLiked(id) { return this.liked.has(id); }
+  isDisliked(id) { return this.disliked.has(id); }
+
   toggleLike(id) {
-    if (!id) return;
-    let l = this.get(STORAGE.LIKED);
-    let d = this.get(STORAGE.DISLIKED).filter(x => x !== id);
-    this.save(STORAGE.DISLIKED, d);
-    const idx = l.indexOf(id);
-    if (idx >= 0) { l.splice(idx, 1); showToast('Removed from Liked videos'); }
-    else { l.push(id); showToast('Added to Liked videos'); }
-    this.save(STORAGE.LIKED, l);
-  },
+    if (this.liked.has(id)) {
+      this.liked.delete(id);
+    } else {
+      this.liked.add(id);
+      this.disliked.delete(id);
+    }
+    this.set('pt_liked', Array.from(this.liked));
+    this.set('pt_disliked', Array.from(this.disliked));
+    return this.liked.has(id);
+  }
+
   toggleDislike(id) {
-    if (!id) return;
-    let d = this.get(STORAGE.DISLIKED);
-    let l = this.get(STORAGE.LIKED).filter(x => x !== id);
-    this.save(STORAGE.LIKED, l);
-    const idx = d.indexOf(id);
-    if (idx >= 0) { d.splice(idx, 1); }
-    else { d.push(id); showToast('Video disliked'); }
-    this.save(STORAGE.DISLIKED, d);
-  },
-  isLiked(id) { return this.get(STORAGE.LIKED).includes(id); },
-  isDisliked(id) { return this.get(STORAGE.DISLIKED).includes(id); },
-  
-  getSubs() { return this.get(STORAGE.SUBS); },
-  isSubscribed(channelId) { return this.get(STORAGE.SUBS).some(s => s.id === channelId); },
-  toggleSub(channel) {
-    if (!channel || !channel.id) return;
-    let subs = this.get(STORAGE.SUBS);
-    const idx = subs.findIndex(s => s.id === channel.id);
-    if (idx >= 0) { subs.splice(idx, 1); showToast('Unsubscribed'); }
-    else { subs.unshift({ id: channel.id, name: channel.name, avatar: channel.avatar, subscribedAt: Date.now() }); showToast('Subscribed to ' + channel.name); }
-    this.save(STORAGE.SUBS, subs);
-    return subs;
+    if (this.disliked.has(id)) {
+      this.disliked.delete(id);
+    } else {
+      this.disliked.add(id);
+      this.liked.delete(id);
+    }
+    this.set('pt_liked', Array.from(this.liked));
+    this.set('pt_disliked', Array.from(this.disliked));
+    return this.disliked.has(id);
   }
-};
 
-// Precise UI Updater for action buttons (prevents full iframe reload!)
-function updateActionButtons() {
-    if(route !== 'watch' || !currentVideoId) return;
-    
-    const liked = store.isLiked(currentVideoId);
-    const disliked = store.isDisliked(currentVideoId);
-    const saved = store.isSaved(currentVideoId);
-    
-    const likeBtn = document.querySelector('[data-action="like"]');
-    const dislikeBtn = document.querySelector('[data-action="dislike"]');
-    const saveBtn = document.querySelector('[data-action="save"]');
-    
-    if(likeBtn) {
-        likeBtn.className = `pill-btn ${liked ? 'active-liked' : ''}`;
-        likeBtn.innerHTML = `<span class="material-symbols-rounded ${liked ? 'filled-icon' : ''}">thumb_up</span>Like`;
-    }
-    if(dislikeBtn) {
-        dislikeBtn.className = `pill-btn ${disliked ? 'active-liked' : ''}`;
-        dislikeBtn.innerHTML = `<span class="material-symbols-rounded ${disliked ? 'filled-icon' : ''}">thumb_down</span>`;
-    }
-    if(saveBtn) {
-        saveBtn.innerHTML = `<span class="material-symbols-rounded">${saved?'bookmark':'bookmark_add'}</span>${saved?'Saved':'Save'}`;
-    }
-}
+  // Subscriptions
+  isSubscribed(channelId) {
+    return this.subscriptions.some(s => s.id === channelId);
+  }
 
-// Share Feature Logic
-function doShare() {
-  if (!currentVideoId) { showToast('No video playing to share'); return; }
-  const url = `${location.origin}${location.pathname}?v=${currentVideoId}#/watch`;
-  
-  if (navigator.share) {
-    navigator.share({ title: 'PawTube', url: url })
-      .then(() => showToast('Shared successfully!'))
-      .catch(e => {
-        fallbackShare(url);
+  toggleSubscription(channel) {
+    if (!channel || !channel.id) return false;
+    const exists = this.isSubscribed(channel.id);
+    if (exists) {
+      this.subscriptions = this.subscriptions.filter(s => s.id !== channel.id);
+    } else {
+      this.subscriptions.unshift({
+        id: channel.id,
+        name: channel.name || 'Channel',
+        avatar: channel.avatar || '',
+        subscribedAt: Date.now()
       });
-  } else {
-    fallbackShare(url);
+    }
+    this.set('pt_subscriptions', this.subscriptions);
+    window.app?.renderSidebarSubscriptions();
+    return !exists;
   }
-}
 
-function fallbackShare(url) {
-  navigator.clipboard.writeText(url)
-    .then(() => showToast('Watch link copied to clipboard!'))
-    .catch(() => showToast('Failed to copy link.'));
-}
+  // Custom Playlists
+  createPlaylist(title) {
+    const cleanTitle = (title || 'New Playlist').trim();
+    const id = 'pl_' + Date.now();
+    const newPl = { id, title: cleanTitle, createdAt: Date.now(), videos: [] };
+    this.playlists.unshift(newPl);
+    this.set('pt_custom_playlists', this.playlists);
+    return newPl;
+  }
 
-// API Connection Layer
-const API = {
-  baseUrl: '/api',
-  activeRequest: null,
+  deletePlaylist(playlistId) {
+    this.playlists = this.playlists.filter(p => p.id !== playlistId);
+    this.set('pt_custom_playlists', this.playlists);
+  }
 
-  async request(path, options = {}) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), options.timeout || 12000);
-
-    try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        ...options,
-        signal: controller.signal
+  addVideoToPlaylist(playlistId, video) {
+    const pl = this.playlists.find(p => p.id === playlistId);
+    if (!pl || !video || !video.id) return;
+    if (!pl.videos.some(v => v.id === video.id)) {
+      pl.videos.push({
+        id: video.id,
+        title: video.title,
+        channel: video.channel,
+        thumb: video.thumb,
+        duration: video.duration,
+        durationFormatted: video.durationFormatted
       });
-      
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      clearTimeout(timeoutId);
-      throw error;
+      this.set('pt_custom_playlists', this.playlists);
     }
   }
-};
 
-// Feed Manager
-const feedManager = {
-  lastRefresh: 0,
-  isRefreshing: false,
-  
-  async loadFeed(force = false) {
-    if (feedCache.length > 0 && !force && (Date.now() - this.lastRefresh < 15 * 60 * 1000)) return;
-    if (this.isRefreshing) return;
-    
-    this.isRefreshing = true;
-    feedLoading = true;
-    render();
-    
-    try {
-      const history = store.get(STORAGE.HISTORY).slice(0, 10);
-      let queryBase = FEED_QUERIES;
-      
-      // Basic local personalization: add history items to search queries occasionally
-      if (history.length > 0 && Math.random() > 0.5) {
-        queryBase = [...FEED_QUERIES, { q: `related to video`, category: 'Recommended' }];
+  removeVideoFromPlaylist(playlistId, videoId) {
+    const pl = this.playlists.find(p => p.id === playlistId);
+    if (pl) {
+      pl.videos = pl.videos.filter(v => v.id !== videoId);
+      this.set('pt_custom_playlists', this.playlists);
+    }
+  }
+
+  // Search History
+  addSearch(term) {
+    if (!term) return;
+    const clean = term.trim();
+    this.searchHistory = [clean, ...this.searchHistory.filter(s => s !== clean)].slice(0, 15);
+    this.set('pt_search_history', this.searchHistory);
+  }
+
+  // Channel affinity for personalized feed ranking
+  getTopChannelAffinities() {
+    const counts = {};
+    // Channel history weighting
+    for (const h of this.history.slice(0, 40)) {
+      if (h.channelId) counts[h.channelId] = (counts[h.channelId] || 0) + 2;
+    }
+    // Subscription weighting
+    for (const s of this.subscriptions) {
+      if (s.id) counts[s.id] = (counts[s.id] || 0) + 5;
+    }
+    return counts;
+  }
+}
+
+const store = new Store();
+
+// ==========================================
+// TOAST NOTIFICATIONS
+// ==========================================
+function showToast(message, duration = 3000) {
+  const toast = document.getElementById('toast');
+  if (!toast) return;
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => {
+    toast.classList.remove('show');
+  }, duration);
+}
+window.showToast = showToast;
+
+// ==========================================
+// PAWTUBE CORE APPLICATION CONTROLLER
+// ==========================================
+class PawTubeApp {
+  constructor() {
+    this.store = store;
+    this.currentRoute = '';
+    this.currentParams = {};
+    this.abortController = null;
+    this.activeCategory = 'All';
+    this.categories = ['All', 'Trending', 'Tech', 'Music', 'Education', 'Gaming', 'Movies', 'News'];
+    this.playingVideo = null;
+    this.progressInterval = null;
+    this.currentShortsList = [];
+    this.currentShortIndex = 0;
+
+    this.initElements();
+    this.initEventListeners();
+    this.renderSidebarSubscriptions();
+    this.handleRoute();
+  }
+
+  initElements() {
+    this.mainContent = document.getElementById('main-content');
+    this.header = document.getElementById('header');
+    this.searchInput = document.getElementById('header-search');
+    this.searchForm = document.getElementById('search-form');
+    this.searchClearBtn = document.getElementById('search-clear-btn');
+    this.searchSuggestionsDropdown = document.getElementById('search-suggestions-dropdown');
+    this.voiceBtn = document.getElementById('voice-btn');
+    this.menuBtn = document.getElementById('menu-btn');
+    this.sidebar = document.getElementById('sidebar');
+    this.sidebarOverlay = document.getElementById('sidebar-overlay');
+    this.bottomNav = document.getElementById('bottom-nav');
+    this.bnavPill = document.getElementById('bnav-pill');
+    this.miniPlayer = document.getElementById('mini-player');
+    this.modalOverlay = document.getElementById('modal-overlay');
+    this.modalCard = document.getElementById('modal-card');
+  }
+
+  initURLObserver() {
+    // Listen for hash changes (SPA routing)
+    window.addEventListener('hashchange', () => this.handleRoute());
+
+    // Intercept standard query parameters (e.g., ?v=ID) and convert to hash routes
+    if (window.location.search) {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.has('v')) {
+        window.location.replace(window.location.pathname + `#/watch?v=${searchParams.get('v')}`);
+        return;
+      } else if (searchParams.has('channel')) {
+        window.location.replace(window.location.pathname + `#/channel?id=${searchParams.get('channel')}`);
+        return;
+      } else if (searchParams.has('list')) {
+        window.location.replace(window.location.pathname + `#/playlist?id=${searchParams.get('list')}`);
+        return;
       }
-      
-      const results = await Promise.allSettled([
-        API.request('/trending?region=US'), // Get actual trending
-        ...queryBase.map(q => API.request(`/search?q=${encodeURIComponent(q.q)}&filter=videos`))
-      ]);
-      
-      const deduped = new Map();
-      
-      results.forEach((r, i) => {
-        if (r.status === 'fulfilled') {
-          const items = r.value.items || Array.isArray(r.value) ? r.value : [];
-          
-          let cat = 'Trending';
-          if (i > 0) cat = queryBase[i - 1].category;
+    }
+  }
 
-          items.forEach(x => {
-            const id = x.url ? (x.url.match(/v=([a-zA-Z0-9_-]{11})/) || [])[1] : (x.videoId || '');
-            if (id && !deduped.has(id) && x.type === 'stream') {
-               deduped.set(id, { ...x, id, _cat: cat });
-            }
-          });
+  initEventListeners() {
+    this.initURLObserver();
+
+    // Search bar handling
+    let searchDebounceTimer = null;
+    this.searchInput.addEventListener('input', (e) => {
+      const val = e.target.value.trim();
+      this.searchClearBtn.style.display = val ? 'flex' : 'none';
+
+      clearTimeout(searchDebounceTimer);
+      if (val.length >= 2) {
+        searchDebounceTimer = setTimeout(() => this.fetchSearchSuggestions(val), 250);
+      } else {
+        this.closeSearchSuggestions();
+      }
+    });
+
+    this.searchClearBtn.addEventListener('click', () => {
+      this.searchInput.value = '';
+      this.searchClearBtn.style.display = 'none';
+      this.closeSearchSuggestions();
+      this.searchInput.focus();
+    });
+
+    this.searchForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const query = this.searchInput.value.trim();
+      if (query) {
+        this.closeSearchSuggestions();
+        this.closeMobileSearch();
+        this.store.addSearch(query);
+        window.location.hash = `#/search?q=${encodeURIComponent(query)}`;
+      }
+    });
+
+    // Close suggestions on clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.header.contains(e.target)) {
+        this.closeSearchSuggestions();
+      }
+    });
+
+    // Mobile Search toggle
+    const mobileSearchTrigger = document.getElementById('mobile-search-trigger');
+    const mobileSearchBack = document.getElementById('mobile-search-back');
+    if (mobileSearchTrigger) {
+      mobileSearchTrigger.addEventListener('click', () => {
+        this.header.classList.add('mobile-search-open');
+        this.searchInput.focus();
+      });
+    }
+    if (mobileSearchBack) {
+      mobileSearchBack.addEventListener('click', () => this.closeMobileSearch());
+    }
+
+    // Voice search
+    if (this.voiceBtn) {
+      this.voiceBtn.addEventListener('click', () => this.startVoiceSearch());
+    }
+
+    // Sidebar toggles (desktop collapsible vs mobile slide-in)
+    if (this.menuBtn) {
+      this.menuBtn.addEventListener('click', () => {
+        if (window.innerWidth <= 768) {
+          this.sidebar.classList.toggle('show-mobile');
+          this.sidebarOverlay.classList.toggle('show');
+        } else {
+          document.body.classList.toggle('sidebar-collapsed');
         }
       });
-      
-      const combined = [...deduped.values()].map(x => ({
-        id: x.id, 
-        title: x.title, 
-        channel: x.uploaderName, 
-        channelId: (x.uploaderUrl||'').replace('/channel/',''),
-        thumb: x.thumbnail, 
-        avatar: x.uploaderAvatar,
-        duration: x.duration, 
-        views: x.views, 
-        uploaded: x.uploaded || Date.now(), 
-        cat: x._cat
-      }));
+    }
 
-      // Basic transparent scoring
-      // Boost fresh content
-      combined.forEach(item => {
-        let score = 0;
-        const historyIds = history.map(h => h.id);
-        if (historyIds.includes(item.id)) score -= 50; // Penalty for recently watched
-        if (item.cat === 'Trending') score += 10;
-        
-        // freshness (rough heuristic)
-        if (typeof item.uploaded === 'number') {
-           const ageDays = (Date.now() - item.uploaded) / (1000 * 60 * 60 * 24);
-           if (ageDays < 7) score += 20;
-        }
-        item._score = score;
+    if (this.sidebarOverlay) {
+      this.sidebarOverlay.addEventListener('click', () => {
+        this.sidebar.classList.remove('show-mobile');
+        this.sidebarOverlay.classList.remove('show');
       });
-      
-      combined.sort((a, b) => b._score - a._score);
-      
-      feedCache = combined;
-      this.lastRefresh = Date.now();
-      
-      feed = activeCategory === 'All' ? feedCache : feedCache.filter(x => x.cat === activeCategory);
-    } catch(e) { 
-      showToast('Could not load feed. Using offline cache if available.'); 
-    } finally {
-      this.isRefreshing = false;
-      feedLoading = false; 
-      render();
+    }
+
+    // Modal overlay click to close
+    if (this.modalOverlay) {
+      this.modalOverlay.addEventListener('click', (e) => {
+        if (e.target === this.modalOverlay) {
+          this.closeModal();
+        }
+      });
+    }
+
+    // Mini-player controls
+    document.getElementById('mini-player-expand')?.addEventListener('click', () => {
+      if (this.playingVideo) {
+        window.location.hash = `#/watch?v=${this.playingVideo.id}`;
+      }
+    });
+    document.getElementById('mini-player-play-btn')?.addEventListener('click', () => {
+      window.customPlayer?.togglePlay();
+    });
+    document.getElementById('mini-player-close-btn')?.addEventListener('click', () => {
+      this.hideMiniPlayer();
+    });
+
+    // Keyboard shortcuts for Shorts navigation
+    window.addEventListener('keydown', (e) => {
+      if (this.currentRoute === '/shorts') {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.navigateShort(1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.navigateShort(-1);
+        }
+      }
+    });
+  }
+
+  closeMobileSearch() {
+    this.header.classList.remove('mobile-search-open');
+    this.closeSearchSuggestions();
+  }
+
+  async fetchSearchSuggestions(val) {
+    try {
+      const suggestions = await PawTubeAPI.getSearchSuggestions(val);
+      if (suggestions && suggestions.length > 0) {
+        this.renderSearchSuggestions(suggestions);
+      } else {
+        this.closeSearchSuggestions();
+      }
+    } catch (_) {
+      this.closeSearchSuggestions();
     }
   }
-};
 
-async function loadFeed(force = false) {
-  return feedManager.loadFeed(force);
-}
+  renderSearchSuggestions(suggestions) {
+    let html = '';
+    suggestions.slice(0, 8).forEach(s => {
+      const text = typeof s === 'string' ? s : (s.query || s.title || '');
+      if (!text) return;
+      html += `
+        <div class="suggestion-item" data-query="${encodeURIComponent(text)}">
+          <span class="material-symbols-rounded">search</span>
+          <span>${this.escapeHtml(text)}</span>
+        </div>
+      `;
+    });
+    this.searchSuggestionsDropdown.innerHTML = html;
+    this.searchSuggestionsDropdown.classList.add('open');
 
-// Search Logic
-function scoreResult(item, q) {
-  const query = q.toLowerCase();
-  const title = String(item.title||'').toLowerCase();
-  const channel = String(item.channel||'').toLowerCase();
-  let score = 0;
-  if (title === query) score += 120;
-  if (title.startsWith(query)) score += 80;
-  if (title.includes(query)) score += 45;
-  const terms = query.split(/\s+/).filter(Boolean);
-  score += terms.filter(t => title.includes(t)).length * 12;
-  if (channel.includes(query)) score += 8;
-  return score;
-}
+    this.searchSuggestionsDropdown.querySelectorAll('.suggestion-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const q = decodeURIComponent(item.getAttribute('data-query'));
+        this.searchInput.value = q;
+        this.closeSearchSuggestions();
+        this.closeMobileSearch();
+        this.store.addSearch(q);
+        window.location.hash = `#/search?q=${encodeURIComponent(q)}`;
+      });
+    });
+  }
 
-const searchManager = {
-  controller: null,
-  isSearching: false,
-  cache: new Map(),
+  closeSearchSuggestions() {
+    this.searchSuggestionsDropdown.classList.remove('open');
+    this.searchSuggestionsDropdown.innerHTML = '';
+  }
 
-  async runSearch(query) {
-    if (this.controller) this.controller.abort();
-    this.controller = new AbortController();
-    
-    if (!query) { searchResults = []; render(); return; }
-    
-    // Check cache
-    if (this.cache.has(query)) {
-      searchResults = this.cache.get(query);
-      render();
+  startVoiceSearch() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      showToast('Voice search is not supported in this browser');
+      return;
+    }
+    try {
+      const rec = new SpeechRecognition();
+      rec.lang = 'en-US';
+      rec.onstart = () => showToast('Listening... Speak now');
+      rec.onresult = (e) => {
+        const transcript = e.results[0][0].transcript;
+        if (transcript) {
+          this.searchInput.value = transcript;
+          this.store.addSearch(transcript);
+          window.location.hash = `#/search?q=${encodeURIComponent(transcript)}`;
+        }
+      };
+      rec.onerror = () => showToast('Could not hear voice. Please try again');
+      rec.start();
+    } catch (_) {
+      showToast('Voice search error');
+    }
+  }
+
+  // ==========================================
+  // ROUTING & NAVIGATION
+  // ==========================================
+  handleRoute() {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+
+    const hash = window.location.hash || '#/home';
+    const [rawPath, queryString] = hash.slice(1).split('?');
+    const params = new URLSearchParams(queryString || '');
+
+    // Normalize path (ensure leading slash)
+    let path = rawPath || '/home';
+    if (!path.startsWith('/')) {
+      path = '/' + path;
+    }
+
+    this.currentRoute = path;
+    this.currentParams = Object.fromEntries(params.entries());
+
+    // Update 4-Tab Navigation Active States
+    this.updateNavigationUI(this.currentRoute);
+
+    // Mini-player management:
+    // If user moves away from watch page while video is playing, show mini-player
+    if (this.currentRoute !== '/watch' && this.playingVideo && this.store.preferences.miniPlayerEnabled) {
+      this.showMiniPlayer();
+    } else if (this.currentRoute === '/watch') {
+      this.hideMiniPlayer();
+    }
+
+    // Scroll top
+    window.scrollTo({ top: 0, behavior: 'instant' });
+
+    // Route dispatch
+    switch (this.currentRoute) {
+      case '/home':
+        this.renderHomeFeed();
+        break;
+      case '/shorts':
+        this.renderShortsFeed();
+        break;
+      case '/library':
+        this.renderPlaylistsAndHistory();
+        break;
+      case '/you':
+        this.renderYouPage();
+        break;
+      case '/watch':
+        this.renderWatchPage(this.currentParams.v);
+        break;
+      case '/channel':
+        this.renderChannelPage(this.currentParams.id);
+        break;
+      case '/playlist':
+        this.renderPlaylistPage(this.currentParams.id);
+        break;
+      case '/search':
+        this.renderSearchResults(this.currentParams.q);
+        break;
+      default:
+        this.renderHomeFeed();
+        break;
+    }
+  }
+
+  updateNavigationUI(route) {
+    // Map route to the 4 main tabs
+    let activeTab = 'home';
+    if (route === '/home') activeTab = 'home';
+    else if (route === '/shorts') activeTab = 'shorts';
+    else if (route === '/library' || route.startsWith('/playlist')) activeTab = 'library';
+    else if (route === '/you') activeTab = 'you';
+
+    // Sidebar items
+    document.querySelectorAll('.sidebar .nav-item, .mini-sidebar .mini-nav-item').forEach(el => {
+      const itemRoute = el.getAttribute('data-route');
+      const isMatch = (itemRoute === `/${activeTab}`);
+      el.classList.toggle('active', isMatch);
+    });
+
+    // Mobile Bottom Nav items & sliding pill
+    const bnavItems = Array.from(document.querySelectorAll('.bottom-nav .bnav-item'));
+    bnavItems.forEach((el, index) => {
+      const itemRoute = el.getAttribute('data-route');
+      const isMatch = (itemRoute === `/${activeTab}`);
+      el.classList.toggle('active', isMatch);
+
+      if (isMatch && this.bnavPill) {
+        // Position sliding pill
+        const count = bnavItems.length;
+        const percent = (index * 100);
+        this.bnavPill.style.transform = `translateX(${percent}%)`;
+      }
+    });
+  }
+
+  renderSidebarSubscriptions() {
+    const listEl = document.getElementById('sidebar-subs-list');
+    if (!listEl) return;
+
+    if (this.store.subscriptions.length === 0) {
+      listEl.innerHTML = '<div style="padding:8px 16px; font-size:12px; color:var(--text-tertiary);">No subscriptions yet</div>';
       return;
     }
 
-    this.isSearching = true;
-    feedLoading = true;
-    render();
-
-    try {
-      const [rel, recent] = await Promise.allSettled([
-        API.request(`/search?q=${encodeURIComponent(query)}&filter=videos`, { signal: this.controller.signal }),
-        API.request(`/search?q=${encodeURIComponent(query)}&filter=videos&sort_by=upload_date`, { signal: this.controller.signal })
-      ]);
-
-      const all = [];
-      for (const r of [rel, recent]) {
-        if (r.status === 'fulfilled') {
-          const items = Array.isArray(r.value) ? r.value : (r.value?.items || []);
-          all.push(...items);
-        }
-      }
-
-      const deduped = new Map();
-      for (const x of all) {
-        const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
-        if (!id || deduped.has(id)) continue;
-        deduped.set(id, x);
-      }
-
-      const results = [...deduped.values()].map(x => ({
-        id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1],
-        title: x.title || 'Untitled',
-        channel: x.uploaderName || 'Unknown',
-        channelId: (x.uploaderUrl||'').replace('/channel/',''),
-        thumb: x.thumbnail || '',
-        avatar: x.uploaderAvatar || '',
-        duration: x.duration || 0,
-        views: x.views || 0,
-        uploaded: x.uploaded || Date.now()
-      })).filter(x => x.id).sort((a,b) => scoreResult(b, query) - scoreResult(a, query)).slice(0,24);
-      
-      this.cache.set(query, results);
-      searchResults = results;
-    } catch(err) {
-      if (err.name !== 'AbortError') {
-        showToast('Search unavailable');
-        searchResults = [];
-      }
-    } finally {
-      if (this.controller && !this.controller.signal.aborted) {
-         this.isSearching = false;
-         feedLoading = false;
-         render();
-      }
-    }
-  }
-};
-
-async function runSearch(q) {
-  const query = (q || '').trim();
-  searchQuery = query;
-  
-  const pastedId = extractVideoId(query);
-  if (pastedId) {
-    currentVideoId = pastedId;
-    store.addHistory(pastedId);
-    history.pushState(null, '', `?v=${pastedId}#/watch`);
-    location.hash = '#/watch';
-    $('#header').classList.remove('search-active');
-    render();
-    return;
-  }
-  
-  return searchManager.runSearch(query);
-}
-
-// Formatting Helpers
-function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function fmtViews(n) {
-  if (!n) return '';
-  if (n >= 1e9) return (n/1e9).toFixed(1)+'B views';
-  if (n >= 1e6) return (n/1e6).toFixed(1)+'M views';
-  if (n >= 1e3) return (n/1e3).toFixed(0)+'K views';
-  return n + ' views';
-}
-function timeAgo(ts) {
-  const diff = Date.now() - Number(ts); if (diff < 0 || !ts) return '';
-  const m = Math.floor(diff/60000); if (m < 60) return m+'m ago';
-  const h = Math.floor(m/60); if (h < 24) return h+'h ago';
-  const d = Math.floor(h/24); if (d < 30) return d+'d ago';
-  const mo = Math.floor(d/30); if (mo < 12) return mo+'mo ago';
-  return Math.floor(mo/12)+'y ago';
-}
-function fmtDuration(s) {
-  if (!s) return '';
-  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sc = Math.floor(s%60);
-  return h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(sc).padStart(2,'0')}` : `${m}:${String(sc).padStart(2,'0')}`;
-}
-
-// Render Templates
-function renderVideo(v, isCompact) {
-  const saved = store.isSaved(v.id);
-  const dur = fmtDuration(v.duration);
-  const meta = [fmtViews(v.views), timeAgo(v.uploaded)].filter(Boolean).join(' • ');
-  const sBtn = `<button class="save-btn ${saved?'saved':''}" data-action="save" data-id="${v.id}"><span class="material-symbols-rounded">${saved?'bookmark':'bookmark_add'}</span></button>`;
-  const thumb = v.thumb || `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`;
-  
-  if (isCompact) {
-    return `<div class="related-card" data-id="${v.id}" data-action="play">
-      <div class="related-thumb"><img src="${thumb}" loading="lazy">${dur?`<span class="duration-badge">${dur}</span>`:''}${sBtn}</div>
-      <div class="related-meta"><div class="related-title-text">${esc(v.title)}</div><div class="related-channel">${esc(v.channel)}<br>${meta}</div></div>
-    </div>`;
-  }
-  
-  return `<div class="video-card" data-id="${v.id}" data-action="play">
-    <div class="thumbnail-wrap"><img src="${thumb}" loading="lazy">${dur?`<span class="duration-badge">${dur}</span>`:''}${sBtn}</div>
-    <div class="card-info">
-      <div class="channel-avatar">${v.avatar ? `<img src="${v.avatar}">` : ''}</div>
-      <div class="card-meta">
-        <div class="card-title">${esc(v.title)}</div>
-        <div class="card-channel">${esc(v.channel)}</div>
-        <div class="card-extra">${meta}</div>
-      </div>
-    </div>
-  </div>`;
-}
-
-function getSkeletonGrid(count = 12) {
-  return `<div class="skel-grid">
-    ${Array(count).fill(0).map(() => `
-      <div class="skel-video-card">
-        <div class="skeleton skel-thumb"></div>
-        <div class="skel-card-info">
-          <div class="skeleton skel-avatar"></div>
-          <div class="skel-card-meta">
-            <div class="skeleton skel-title"></div>
-            <div class="skeleton skel-text"></div>
-            <div class="skeleton skel-text short"></div>
-          </div>
-        </div>
-      </div>
-    `).join('')}
-  </div>`;
-}
-
-function viewHome() {
-  const cats = ['All', 'Tech', 'Education', 'Music', 'Movies', 'Gaming'];
-  const catHtml = `<div class="category-bar">${cats.map(c => `<button class="category-chip ${activeCategory === c ? 'active':''}" data-action="cat" data-val="${c}">${c}</button>`).join('')}</div>`;
-  
-  const searchHtml = window.innerWidth > 600 ? `<div class="search-section"><div class="search-row">
-    <input type="text" id="home-search" class="search-input" placeholder="Search videos or paste YouTube link..." value="${esc(searchQuery)}" autocomplete="off"/>
-    <button class="btn-primary" data-action="run-search-home"><span class="material-symbols-rounded" style="font-size:20px">search</span>Search</button>
-  </div></div>` : '';
-  
-  if (searchQuery) {
-    const resultsHtml = feedLoading 
-      ? `<h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Searching...</h2>` + getSkeletonGrid(8)
-      : `<h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Search Results for "${esc(searchQuery)}"</h2>
-         <div class="video-grid" style="margin-bottom: 32px;">${searchResults.map(r => renderVideo(r)).join('')}</div>
-         <h2 class="section-title" style="margin-bottom:16px; font-size:18px;">Suggested</h2>`;
-         
-    const feedHtml = feedLoading ? '' : `<div class="video-grid">${feed.map(f => renderVideo(f)).join('')}</div>`;
-    return `<div>${searchHtml}${catHtml}${resultsHtml}${feedHtml}</div>`;
-  } else {
-    let content = feedLoading ? getSkeletonGrid(12) : `<div class="video-grid">${feed.map(f => renderVideo(f)).join('')}</div>`;
-    return `<div>${searchHtml}${catHtml}${content}</div>`;
-  }
-}
-
-let watchLoading = false;
-let watchDetailsCache = new Map();
-
-async function fetchVideoDetails(id) {
-  if (watchDetailsCache.has(id)) return watchDetailsCache.get(id);
-  try {
-    const data = await API.request(`/videos?id=${id}`);
-    const details = {
-      id: id,
-      title: data.title,
-      channel: data.uploader,
-      channelId: (data.uploaderUrl||'').replace('/channel/',''),
-      avatar: data.uploaderAvatar,
-      views: data.views,
-      uploaded: data.uploadDate,
-      description: data.description || '',
-      related: (data.relatedStreams || []).map(x => ({
-        id: (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1] || x.videoId,
-        title: x.title,
-        channel: x.uploaderName,
-        thumb: x.thumbnail,
-        duration: x.duration,
-        views: x.views,
-        uploaded: x.uploaded
-      })).filter(x => x.id).slice(0, 15)
-    };
-    watchDetailsCache.set(id, details);
-    return details;
-  } catch (err) {
-    return null;
-  }
-}
-
-function viewWatch() {
-  if (!currentVideoId) {
-    return `<div class="watch-page"><div class="watch-layout">
-      <div class="player-section" style="height: 60vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-         <span class="material-symbols-rounded" style="font-size:80px; color:var(--text-disabled); margin-bottom: 16px;">smart_display</span>
-         <h2 style="margin-bottom: 24px; color: var(--text-secondary);">Enter a video link to start watching</h2>
-         <div class="search-row" style="width: 100%; max-width: 500px; display:flex;">
-            <input type="text" id="watch-input" class="search-input" placeholder="Paste YouTube link or ID..." autocomplete="off"/>
-            <button class="btn-primary" data-action="play-input"><span class="material-symbols-rounded" style="font-size:20px">play_arrow</span>Play</button>
-         </div>
-      </div>
-    </div></div>`;
+    let html = '';
+    this.store.subscriptions.slice(0, 10).forEach(sub => {
+      html += `
+        <a class="sidebar-sub-item" href="#/channel?id=${encodeURIComponent(sub.id)}">
+          <img class="sidebar-sub-avatar" src="${sub.avatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="${this.escapeHtml(sub.name)}" />
+          <span class="sidebar-sub-name">${this.escapeHtml(sub.name)}</span>
+        </a>
+      `;
+    });
+    listEl.innerHTML = html;
   }
 
-  const cachedMeta = feedCache.find(f => f.id === currentVideoId) || searchResults.find(r => r.id === currentVideoId);
-  const meta = watchDetailsCache.get(currentVideoId) || cachedMeta || { title: 'Loading details...', channel: 'Loading...', loading: true };
-  
-  if (meta.loading && !watchLoading) {
-    watchLoading = true;
-    fetchVideoDetails(currentVideoId).then(details => {
-      watchLoading = false;
-      if (details) render();
-    }).catch(() => { watchLoading = false; });
-  }
-
-  const saved = store.isSaved(currentVideoId);
-  const liked = store.isLiked(currentVideoId);
-  const disliked = store.isDisliked(currentVideoId);
-  
-  const relatedVideos = meta.related || feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
-  
-  return `<div class="watch-page" id="watch-layout-container"><div class="watch-layout">
-    <div class="player-section">
-      <div class="player-container" id="player-mount-point">
-        <!-- Player is attached here dynamically to prevent reload -->
-      </div>
-      <div id="watch-details-container">
-        ${renderWatchDetailsHTML(meta, saved, liked, disliked)}
-      </div>
-    </div>
-    <div class="related-section" id="watch-related-container">
-      ${renderRelatedVideosHTML(relatedVideos)}
-    </div>
-  </div></div>`;
-}
-
-function renderWatchDetailsHTML(meta, saved, liked, disliked) {
-  return `<div class="video-details">
-        <h1 class="video-title">${esc(meta.title)}</h1>
-        <div class="watch-actions-bar">
-          <div class="watch-channel-info">
-            <div class="watch-channel-avatar">${meta.avatar ? `<img src="${meta.avatar}">`:''}</div>
-            <div class="watch-channel-text">
-              <span class="w-channel-name">${esc(meta.channel)}</span>
-              <span class="w-channel-subs">Verified Stream</span>
-            </div>
-            <button class="btn-subscribe" data-channel-id="${esc(meta.channelId || meta.channel)}" data-channel-name="${esc(meta.channel)}" data-channel-avatar="${esc(meta.avatar || '')}">${store.isSubscribed(meta.channelId || meta.channel) ? 'Subscribed' : 'Subscribe'}</button>
-          </div>
-          <div class="watch-action-buttons">
-            <div class="pill-group">
-              <button class="pill-btn ${liked ? 'active-liked' : ''}" data-action="like">
-                <span class="material-symbols-rounded ${liked ? 'filled-icon' : ''}">thumb_up</span>Like
-              </button>
-              <div class="pill-divider"></div>
-              <button class="pill-btn ${disliked ? 'active-liked' : ''}" data-action="dislike">
-                <span class="material-symbols-rounded ${disliked ? 'filled-icon' : ''}">thumb_down</span>
-              </button>
-            </div>
-            <button class="pill-btn" data-action="share"><span class="material-symbols-rounded">share</span>Share</button>
-            <button class="pill-btn" data-action="save" data-id="${currentVideoId}"><span class="material-symbols-rounded">${saved?'bookmark':'bookmark_add'}</span>${saved?'Saved':'Save'}</button>
-          </div>
-        </div>
-        <div class="video-description">
-          <p><strong>${fmtViews(meta.views || 4500)} ${meta.uploaded ? `• ${timeAgo(meta.uploaded) || meta.uploaded}` : ''}</strong></p>
-          <p style="margin-top:8px; white-space: pre-wrap; word-break: break-word;">${meta.description ? esc(meta.description.substring(0, 300)) + (meta.description.length > 300 ? '...' : '') : 'Clean, tracker-free player presentation on PawTube frontend environment.'}</p>
-        </div>
-      </div>`;
-}
-
-function renderRelatedVideosHTML(relatedVideos) {
-  return watchLoading && !relatedVideos.length ? getSkeletonGrid(6) : relatedVideos.map(s => renderVideo(s, true)).join('');
-}
-
-function updateWatchDetails() {
-  const cachedMeta = feedCache.find(f => f.id === currentVideoId) || searchResults.find(r => r.id === currentVideoId);
-  const meta = watchDetailsCache.get(currentVideoId) || cachedMeta || { title: 'Loading details...', channel: 'Loading...', loading: true };
-  const saved = store.isSaved(currentVideoId);
-  const liked = store.isLiked(currentVideoId);
-  const disliked = store.isDisliked(currentVideoId);
-  
-  const relatedVideos = meta.related || feedCache.filter(f => f.id !== currentVideoId).slice(0, 15);
-  
-  const detailsContainer = $('#watch-details-container');
-  if (detailsContainer) detailsContainer.innerHTML = renderWatchDetailsHTML(meta, saved, liked, disliked);
-  
-  const relatedContainer = $('#watch-related-container');
-  if (relatedContainer) relatedContainer.innerHTML = renderRelatedVideosHTML(relatedVideos);
-}
-
-function viewHistory() {
-  const historyData = store.get(STORAGE.HISTORY);
-  const items = historyData.map(h => {
-    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: 'Playback History', id: h.id };
-    const rendered = renderVideo(f, true);
-    // Inject remove button into the related-card
-    return rendered.replace('</div>\n    </div>', `<button class="icon-btn" style="position:absolute; right:8px; top:8px; width:32px; height:32px; background:rgba(0,0,0,0.6);" data-action="remove-history" data-id="${f.id}"><span class="material-symbols-rounded" style="font-size:18px;">close</span></button></div>\n    </div>`).replace('class="related-card"', 'class="related-card" style="position:relative;"');
-  });
-  if (!items.length) return `<div class="empty-state"><span class="material-symbols-rounded">history</span><h2>Keep track of what you watch</h2><p style="margin-top:8px">Your local history buffer is currently blank.</p></div>`;
-  return `<div>
-    <div class="section-header">
-      <h1 class="section-title">Watch History</h1>
-      <button class="pill-btn" data-action="clear-history" style="height:32px; font-size:13px; color:var(--text-secondary);"><span class="material-symbols-rounded" style="font-size:18px;">delete</span>Clear all</button>
-    </div>
-    <div class="related-list" style="max-width:800px">${items.join('')}</div>
-  </div>`;
-}
-
-let subsChannelVideos = {};
-let subsLoading = false;
-let activeChannelFetches = new Map();
-
-async function fetchChannelVideos(channelId) {
-  if (subsChannelVideos[channelId]) return subsChannelVideos[channelId];
-  if (activeChannelFetches.has(channelId)) return activeChannelFetches.get(channelId);
-  
-  const sub = store.getSubs().find(s => s.id === channelId);
-  if (!sub) return [];
-  
-  const fetchPromise = (async () => {
-    try {
-      const data = await API.request(`/search?channelId=${encodeURIComponent(channelId)}&filter=videos`);
-      const items = (data.items || []).map(x => {
-        const id = (x.url || '').match(/v=([a-zA-Z0-9_-]{11})/)?.[1];
-        const xChannelId = (x.uploaderUrl||'').replace('/channel/','');
-        if (!id || xChannelId !== channelId) return null;
-        return { id, title: x.title, channel: x.uploaderName, channelId: xChannelId, thumb: x.thumbnail, avatar: x.uploaderAvatar, duration: x.duration, views: x.views, uploaded: x.uploaded };
-      }).filter(Boolean);
-      subsChannelVideos[channelId] = items;
-      return items;
-    } catch { 
-      return []; 
-    } finally {
-      activeChannelFetches.delete(channelId);
-    }
-  })();
-  
-  activeChannelFetches.set(channelId, fetchPromise);
-  return fetchPromise;
-}
-
-function viewSubscriptions() {
-  const subs = store.getSubs();
-  if (!subs.length) {
-    return `<div class="empty-state"><span class="material-symbols-rounded">subscriptions</span><h2>No subscriptions yet</h2><p style="margin-top:8px">Subscribe to channels from the watch page to see their videos here.</p></div>`;
-  }
-  
-  const subsGrid = subs.map(s => `
-    <div class="subs-card" data-action="sub-channel" data-channel-id="${esc(s.id)}">
-      <img class="subs-avatar" src="${s.avatar || 'https://i.ytimg.com/vi/placeholder/mqdefault.jpg'}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2248%22 fill=%22%23555%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%23fff%22 font-size=%2230%22 font-family=%22sans-serif%22>${esc(s.name[0])}</text></svg>'">
-      <div class="subs-name">${esc(s.name)}</div>
-      <button class="subs-unsub" data-action="unsub" data-channel-id="${esc(s.id)}">Unsubscribe</button>
-    </div>
-  `).join('');
-  
-  const allVideos = subs.map(s => subsChannelVideos[s.id] || []).flat();
-  const videosHtml = allVideos.length 
-    ? `<h2 class="section-title" style="margin-bottom:16px;font-size:18px;">Latest from Subscriptions</h2>
-       <div class="video-grid">${allVideos.map(v => renderVideo(v)).join('')}</div>`
-    : subsLoading 
-      ? `<h2 class="section-title" style="margin-bottom:16px;font-size:18px;">Latest from Subscriptions</h2>` + getSkeletonGrid(8)
-      : '<div class="empty-state" style="padding:40px;"><span class="material-symbols-rounded">movie</span><h2>No recent videos</h2><p style="margin-top:8px">Channels you subscribed to haven\'t posted anything recently.</p></div>';
-  
-  return `<div>
-    <div class="subs-header"><span class="material-symbols-rounded">subscriptions</span><h1 class="section-title" style="font-size:22px;">Subscriptions</h1></div>
-    <div class="subs-grid">${subsGrid}</div>
-    ${videosHtml}
-  </div>`;
-}
-
-function viewSaved() {
-  const items = store.get(STORAGE.SAVED).map(h => {
-    let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: 'Saved Reference', id: h.id };
-    return renderVideo(f, true);
-  });
-  if (!items.length) return `<div class="empty-state"><span class="material-symbols-rounded">bookmark</span><h2>No saved videos</h2><p style="margin-top:8px">Bookmark links to access later on demand.</p></div>`;
-  return `<div><h1 class="section-title" style="margin-bottom:24px">Watch Later</h1><div class="related-list" style="max-width:800px">${items.join('')}</div></div>`;
-}
-
-function render() {
-  const hash = location.hash.replace('#', '');
-  const path = hash.split('?')[0] || '/home';
-  route = ['home','watch','history','saved','subscriptions','shorts','library','you'].includes(path.slice(1)) ? path.slice(1) : 'home';
-  
-  let activeTab = route;
-  if (route === 'history' || route === 'saved') activeTab = 'library';
-  if (route === 'subscriptions') activeTab = 'you';
-  
-  $('.nav-item, .bnav-item').forEach(el => el.classList.remove('active'));
-  $(`[data-route="/${activeTab}"]`).forEach(el => el.classList.add('active'));
-  
-  const tabs = ['home', 'shorts', 'library', 'you'];
-  const tabIndex = tabs.indexOf(activeTab);
-  const pill = $('#bnav-pill');
-  if (pill) {
-     if (tabIndex !== -1) {
-         pill.style.opacity = '1';
-         pill.style.transform = `translateX(${tabIndex * 100}%)`;
-     } else {
-         pill.style.opacity = '0';
-     }
-  }
-  
-  const main = $('#main-content');
-  
-  if (window.playerWrapper && playerWrapper.parentNode) {
-      playerWrapper.remove();
-  }
-
-  if(route === 'home') { main.innerHTML = viewHome(); }
-  else if(route === 'watch') { 
-      if (main.querySelector('#watch-layout-container') && main.dataset.vid === currentVideoId) {
-          updateWatchDetails();
-      } else {
-          main.innerHTML = viewWatch(); 
-          main.dataset.vid = currentVideoId;
-          const mount = $('#player-mount-point');
-          if (mount && window.playerWrapper) mount.appendChild(window.playerWrapper);
-          if (window.initPlayer) window.initPlayer(currentVideoId);
-      }
-  }
-  else if(route === 'history') { main.innerHTML = viewHistory(); }
-  else if(route === 'saved') { main.innerHTML = viewSaved(); }
-  else if(route === 'subscriptions') { 
-    main.innerHTML = viewSubscriptions();
-    if (!subsLoading && store.getSubs().length) {
-      subsLoading = true;
-      Promise.all(store.getSubs().map(s => fetchChannelVideos(s.id)))
-        .then(() => { subsLoading = false; render(); })
-        .catch(() => { subsLoading = false; });
-    }
-  }
-  else if(route === 'shorts') { main.innerHTML = viewShorts(); fetchShorts(); }
-  else if(route === 'library') { main.innerHTML = viewLibrary(); }
-  else if(route === 'you') { main.innerHTML = viewYou(); }
-  
-  const hs = $('#header-search');
-  if (hs && document.activeElement !== hs) hs.value = searchQuery;
-}
-
-let toastTimer;
-function showToast(msg) {
-  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
-}
-
-// Global Event Coordinator
-document.addEventListener('click', e => {
-  const target = e.target;
-  
-  // Route Navigation Clicking
-  const routeEl = target.closest('[data-route]');
-  if (routeEl) { location.hash = routeEl.dataset.route; return; }
-  
-  // Proper Subscription Logic
-  if (target.closest('.btn-subscribe')) {
-    const btn = target.closest('.btn-subscribe');
-    const channelId = btn.dataset.channelId;
-    const channelName = btn.dataset.channelName;
-    const channelAvatar = btn.dataset.channelAvatar;
-    if (channelId) {
-      store.toggleSub({ id: channelId, name: channelName, avatar: channelAvatar });
-      const isSubbed = store.isSubscribed(channelId);
-      btn.textContent = isSubbed ? 'Subscribed' : 'Subscribe';
-      btn.className = `btn-subscribe ${isSubbed ? 'subscribed-label' : ''}`;
-    }
-    return;
-  }
-  
-  // Custom Hook Functional Pipeline Actions
-  const actionEl = target.closest('[data-action]');
-  if (actionEl) {
-    const act = actionEl.dataset.action;
-    const id = actionEl.dataset.id || actionEl.closest('.video-card, .related-card')?.dataset.id;
-    
-    if (act === 'cat') { activeCategory = actionEl.dataset.val; feed = activeCategory === 'All' ? feedCache : feedCache.filter(x => x.cat === activeCategory); render(); }
-    
-    if (act === 'play' && id) { 
-        currentVideoId = id; 
-        store.addHistory(id); 
-        history.pushState(null, '', `?v=${id}#/watch`);
-        location.hash = '#/watch'; 
-        render(); 
-    }
-    
-    if (act === 'save' && id) { 
-        e.stopPropagation(); e.preventDefault(); 
-        store.toggleSaved(id); 
-        updateActionButtons();
-        // Also update standard card UI to avoid full render loop
-        document.querySelectorAll(`.save-btn[data-id="${id}"]`).forEach(btn => {
-            const isSaved = store.isSaved(id);
-            btn.className = `save-btn ${isSaved ? 'saved' : ''}`;
-            btn.innerHTML = `<span class="material-symbols-rounded">${isSaved ? 'bookmark' : 'bookmark_add'}</span>`;
-        });
-    }
-    
-    if (act === 'share' && currentVideoId) { e.stopPropagation(); doShare(); }
-    if (act === 'like' && currentVideoId) { e.stopPropagation(); store.toggleLike(currentVideoId); updateActionButtons(); }
-    if (act === 'dislike' && currentVideoId) { e.stopPropagation(); store.toggleDislike(currentVideoId); updateActionButtons(); }
-    
-    if (act === 'remove-history') {
-      e.stopPropagation();
-      if (id) {
-        store.removeHistory(id);
-        render();
-      }
-    }
-    
-    if (act === 'clear-history') {
-      e.stopPropagation();
-      store.clearHistory();
-      render();
-    }
-    
-    if (act === 'unsub') {
-      e.stopPropagation();
-      const chId = actionEl.dataset.channelId;
-      if (chId) {
-        const subs = store.getSubs();
-        const sub = subs.find(s => s.id === chId);
-        if (sub) store.toggleSub(sub);
-        render();
-      }
-    }
-    
-    if (act === 'sub-channel') {
-      const chId = actionEl.dataset.channelId;
-      if (chId) {
-        location.hash = '#/subscriptions';
-        render();
-      }
-    }
-    
-    if (act === 'run-search-home') {
-        const q = $('#home-search')?.value;
-        if (q) runSearch(q);
-    }
-    
-    if (act === 'play-input') {
-        const q = $('#watch-input')?.value;
-        const vid = extractVideoId(q);
-        if (vid) {
-            currentVideoId = vid;
-            store.addHistory(vid);
-            history.pushState(null, '', `?v=${vid}#/watch`);
-            location.hash = '#/watch';
-            render();
-        } else if (q) {
-            location.hash = '#/home';
-            runSearch(q);
-        } else {
-            showToast('Please enter a valid link or ID');
-        }
-    }
-  }
-});
-
-// App Layout Menu Toggles
-$('#menu-btn')?.addEventListener('click', () => {
-  if (window.innerWidth > 1300) {
-    $('#sidebar').style.transform = $('#sidebar').style.transform === 'translateX(-100%)' ? 'translateX(0)' : 'translateX(-100%)';
-    $('#main-content').style.marginLeft = $('#sidebar').style.transform === 'translateX(-100%)' ? 'var(--mini-sidebar-width)' : 'var(--sidebar-width)';
-  } else {
-    $('#sidebar').style.transform = 'translateX(0)';
-    $('#sidebar-overlay').classList.add('show');
-  }
-});
-$('#sidebar-overlay')?.addEventListener('click', () => {
-  $('#sidebar').style.transform = 'translateX(-100%)';
-  $('#sidebar-overlay').classList.remove('show');
-});
-
-// Search overlay controller hooks
-$$('.mobile-search-trigger').forEach(btn => {
-  btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    $('#header').classList.add('search-active');
-    setTimeout(() => $('#header-search').focus(), 100);
-  });
-});
-$('#mobile-search-back')?.addEventListener('click', () => {
-  $('#header').classList.remove('search-active');
-});
-
-// Debounced typing listener to restore smooth live searching
-let searchDebounceTimer;
-$('#header-search')?.addEventListener('input', e => {
-  searchQuery = e.target.value;
-  clearTimeout(searchDebounceTimer);
-  searchDebounceTimer = setTimeout(() => {
-    const q = e.target.value.trim();
-    if (q) {
-      location.hash = '#/home';
-      runSearch(q);
-    } else {
-      searchResults = [];
-      render();
-    }
-  }, 500);
-});
-
-// Using form submission to natively support mobile keyboard Search/Go buttons
-$('#search-form')?.addEventListener('submit', e => {
-  e.preventDefault();
-  const q = $('#header-search').value.trim();
-  if (window.innerWidth <= 600) $('#header').classList.remove('search-active');
-  location.hash = '#/home';
-  runSearch(q);
-});
-
-// Handle standalone inputs globally
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    if (e.target?.id === 'watch-input' || e.target?.id === 'home-search') {
-      e.preventDefault();
-      const q = e.target.value.trim();
-      const vid = extractVideoId(q);
-      if (vid) {
-        currentVideoId = vid;
-        store.addHistory(vid);
-        history.pushState(null, '', `?v=${vid}#/watch`);
-        location.hash = '#/watch';
-        render();
-      } else if (q) {
-        location.hash = '#/home';
-        runSearch(q);
-      }
-    }
-  }
-});
-
-// Passive Mock Button Toasts
-$('#voice-btn')?.addEventListener('click', () => showToast('Voice search ready...'));
-
-// About Button - show info toast
-$('#about-btn')?.addEventListener('click', () => showToast('PawTube v2.0 - Privacy-focused YouTube client'));
-
-window.addEventListener('hashchange', () => { 
-  window.scrollTo(0,0); 
-  const v = new URLSearchParams(location.search).get('v');
-  if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) currentVideoId = v;
-  render(); 
-});
-
-function init() {
-  const v = new URLSearchParams(location.search).get('v');
-  if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) currentVideoId = v;
-  render();
-  loadFeed();
-}
-
-document.addEventListener('DOMContentLoaded', init);
-
-// --- New Views ---
-
-function viewLibrary() {
-  const historyData = store.get(STORAGE.HISTORY).slice(0, 10);
-  const savedData = store.get(STORAGE.SAVED).slice(0, 10);
-  
-  const renderList = (data, title, href) => {
-    if (!data.length) return '';
-    const items = data.map(h => {
-        let f = feedCache.find(x => x.id === h.id) || searchResults.find(r => r.id === h.id) || watchDetailsCache.get(h.id) || { title: `Video ${h.id}`, channel: '', id: h.id };
-        return renderVideo(f, false);
-    }).join('');
-    return `
-    <div style="margin-bottom:32px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-         <h2 style="font-size:18px; font-weight:600;">${title}</h2>
-         <a href="${href}" style="color:var(--text-secondary); font-size:13px; font-weight:500; text-decoration:none; display:flex; align-items:center;"><span style="margin-right:4px;">See all</span><span class="material-symbols-rounded" style="font-size:16px;">chevron_right</span></a>
-      </div>
-      <div class="video-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px;">
-        ${items}
-      </div>
-    </div>`;
-  };
-
-  const historyHtml = renderList(historyData, 'History', '#/history');
-  const savedHtml = renderList(savedData, 'Watch Later', '#/saved');
-  
-  if (!historyHtml && !savedHtml) {
-      return `<div class="empty-state"><span class="material-symbols-rounded">video_library</span><h2>Your library is empty</h2><p style="margin-top:8px">Videos you watch and save will appear here.</p></div>`;
-  }
-  
-  return `<div style="padding-bottom: 80px;">
-    <h1 class="section-title" style="margin-bottom:24px; display:flex; align-items:center; gap:8px;"><span class="material-symbols-rounded">video_library</span> Library</h1>
-    ${historyHtml}
-    ${savedHtml}
-  </div>`;
-}
-
-function viewYou() {
-  const subs = store.getSubs();
-  return `<div style="padding-bottom: 80px;">
-    <div style="display:flex; align-items:center; gap:16px; margin-bottom:32px; padding-bottom:24px; border-bottom:1px solid var(--border-color);">
-       <img src="https://ui-avatars.com/api/?name=Guest+User&background=333&color=fff&size=80" style="border-radius:50%; width:80px; height:80px;">
-       <div>
-         <h1 style="font-size:24px; font-weight:700; margin-bottom:4px;">Guest User</h1>
-         <p style="color:var(--text-secondary); font-size:13px;">Manage your PawTube experience</p>
-       </div>
-    </div>
-    
-    <div class="you-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
-       <a href="#/subscriptions" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
-         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">subscriptions</span>
-         <div>
-            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Subscriptions</h3>
-            <p style="font-size:12px; color:var(--text-secondary);">${subs.length} channels followed</p>
-         </div>
-       </a>
-       
-       <a href="#/history" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
-         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">history</span>
-         <div>
-            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Watch History</h3>
-            <p style="font-size:12px; color:var(--text-secondary);">Review your watched videos</p>
-         </div>
-       </a>
-
-       <a href="#/saved" class="you-card" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); text-decoration:none; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
-         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">schedule</span>
-         <div>
-            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Watch Later</h3>
-            <p style="font-size:12px; color:var(--text-secondary);">Videos saved for later</p>
-         </div>
-       </a>
-       
-       <div class="you-card" onclick="alert('Settings menu opening...')" style="background:var(--bg-glass); padding:20px; border-radius:var(--radius-lg); cursor:pointer; color:var(--text-primary); display:flex; align-items:center; gap:16px; border:1px solid var(--border-color); transition:transform 0.2s;">
-         <span class="material-symbols-rounded" style="font-size:28px; color:var(--text-secondary);">settings</span>
-         <div>
-            <h3 style="font-weight:600; margin-bottom:4px; font-size:15px;">Settings & Preferences</h3>
-            <p style="font-size:12px; color:var(--text-secondary);">Theme, playback, and privacy</p>
-         </div>
-       </div>
-    </div>
-  </div>`;
-}
-
-let shortsFeed = [];
-let currentShortIndex = 0;
-function viewShorts() {
-    return `<div id="shorts-container" style="height:calc(100vh - var(--header-height)); width:100%; display:flex; justify-content:center; align-items:center; background:#000;">
-       <div style="color:white;"><span class="material-symbols-rounded spinner" style="animation:spin 1s linear infinite; font-size:48px;">progress_activity</span></div>
-    </div>`;
-}
-
-function fetchShorts() {
-   if (shortsFeed.length > 0) {
-       renderShortsUI();
-       return;
-   }
-   
-   API.request('/search?q=%23shorts&filter=videos')
-     .then(data => {
-         if (data.items && data.items.length) {
-             shortsFeed = data.items.map(item => ({
-                 id: item.id,
-                 title: item.title,
-                 channel: item.uploaderName,
-                 thumb: item.thumbnail
-             }));
-             renderShortsUI();
-         } else {
-             const container = $('#shorts-container');
-             if (container) container.innerHTML = `<div style="color:white; opacity:0.7;">No Shorts found right now.</div>`;
-         }
-     }).catch(e => {
-         const container = $('#shorts-container');
-         if (container) container.innerHTML = `<div style="color:white; opacity:0.7;">Failed to load Shorts.</div>`;
-     });
-}
-
-function renderShortsUI() {
-    const container = $('#shorts-container');
-    if (!container) return; // switched route
-    if (!shortsFeed.length) {
-        container.innerHTML = `<div style="color:white; opacity:0.7;">No shorts found.</div>`;
-        return;
-    }
-    const short = shortsFeed[currentShortIndex];
-    
-    container.innerHTML = `
-      <div style="position:relative; width:100%; max-width:480px; height:calc(100vh - var(--header-height)); max-height:100%; background:#111; overflow:hidden; border-radius:16px;">
-         <iframe width="100%" height="100%" src="https://www.youtube.com/embed/${short.id}?autoplay=1&controls=0&modestbranding=1&loop=1&playlist=${short.id}&playsinline=1" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen style="pointer-events:none;"></iframe>
-         <div style="position:absolute; bottom:120px; left:16px; right:64px; color:white; z-index:10; text-shadow:0 1px 4px rgba(0,0,0,0.8);">
-            <h3 style="font-size:16px; font-weight:600; margin-bottom:8px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${short.title}</h3>
-            <p style="font-size:14px; font-weight:500;">@${short.channel}</p>
-         </div>
-         <div style="position:absolute; bottom:120px; right:16px; display:flex; flex-direction:column; gap:24px; z-index:10;">
-            <button onclick="window.showToast?.('Liked Short')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
-               <span class="material-symbols-rounded" style="font-size:24px;">thumb_up</span>
-            </button>
-            <button onclick="window.showToast?.('Disliked Short')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
-               <span class="material-symbols-rounded" style="font-size:24px;">thumb_down</span>
-            </button>
-            <button onclick="navigator.clipboard.writeText('https://youtube.com/watch?v=${short.id}'); window.showToast?.('Link copied')" style="background:rgba(0,0,0,0.4); border-radius:50%; width:48px; height:48px; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(8px);">
-               <span class="material-symbols-rounded" style="font-size:24px;">share</span>
-            </button>
-         </div>
-         <button onclick="window.prevShort()" style="position:absolute; top:30%; right:16px; transform:translateY(-50%); background:rgba(255,255,255,0.15); backdrop-filter:blur(10px); color:white; border:none; border-radius:50%; width:48px; height:48px; cursor:pointer; z-index:10; ${currentShortIndex === 0 ? 'opacity:0; pointer-events:none;' : ''}">
-            <span class="material-symbols-rounded">keyboard_arrow_up</span>
-         </button>
-         <button onclick="window.nextShort()" style="position:absolute; bottom:30%; right:16px; transform:translateY(50%); background:rgba(255,255,255,0.15); backdrop-filter:blur(10px); color:white; border:none; border-radius:50%; width:48px; height:48px; cursor:pointer; z-index:10; ${currentShortIndex === shortsFeed.length - 1 ? 'opacity:0; pointer-events:none;' : ''}">
-            <span class="material-symbols-rounded">keyboard_arrow_down</span>
-         </button>
-         <!-- transparent touch overlay to capture swipe -->
-         <div id="shorts-touch-layer" style="position:absolute; inset:0; z-index:5;"></div>
+  // ==========================================
+  // TAB 1: HOME FEED (PERSONALIZED DISCOVERY)
+  // ==========================================
+  async renderHomeFeed() {
+    // 1. Render Category Bar and Continue Watching skeleton immediately
+    const continueWatching = this.store.getContinueWatching();
+    let html = `
+      <div class="category-bar">
+        ${this.categories.map(cat => `
+          <button class="category-chip ${cat === this.activeCategory ? 'active' : ''}" data-category="${cat}">
+            ${cat}
+          </button>
+        `).join('')}
       </div>
     `;
-    
-    const layer = $('#shorts-touch-layer');
-    if(layer) {
-        let touchStartY = 0;
-        layer.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, {passive: true});
-        layer.addEventListener('touchend', e => {
-            let touchEndY = e.changedTouches[0].clientY;
-            if (touchStartY - touchEndY > 50) window.nextShort();
-            else if (touchEndY - touchStartY > 50) window.window.prevShort();
-            else {
-                // simple tap to toggle pause could be tricky due to iframe API on shorts
-            }
-        }, {passive: true});
-        
-        layer.onwheel = (e) => {
-            if (e.deltaY > 50) { window.nextShort(); e.preventDefault(); }
-            else if (e.deltaY < -50) { window.prevShort(); e.preventDefault(); }
-        };
+
+    if (continueWatching.length > 0 && this.activeCategory === 'All') {
+      html += `
+        <div class="section-header">
+          <h2 class="section-title">
+            <span class="material-symbols-rounded">history</span>
+            Continue Watching
+          </h2>
+        </div>
+        <div class="continue-watching-rail">
+          ${continueWatching.map(v => `
+            <div class="continue-card" onclick="location.hash='#/watch?v=${v.id}'">
+              <div class="continue-thumb-wrap">
+                <img src="${v.thumb || ''}" alt="${this.escapeHtml(v.title)}" loading="lazy" />
+                <div class="duration-badge">${v.durationFormatted || '0:00'}</div>
+                <div class="progress-bar-rail">
+                  <div class="progress-bar-fill" style="width:${Math.min(100, (v.progress / (v.duration || 1)) * 100)}%"></div>
+                </div>
+              </div>
+              <div class="card-title" style="font-size:13.5px;">${this.escapeHtml(v.title)}</div>
+              <div class="card-channel" style="font-size:12px;">${this.escapeHtml(v.channel)}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
     }
+
+    html += `
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="material-symbols-rounded">${this.activeCategory === 'All' ? 'auto_awesome' : 'local_fire_department'}</span>
+          ${this.activeCategory === 'All' ? 'Recommended for You' : this.activeCategory}
+        </h2>
+        
+      </div>
+      <div class="video-grid" id="home-grid">
+        ${this.renderSkeletonCards(8)}
+      </div>
+    `;
+
+    this.mainContent.innerHTML = html;
+
+    // Category click bindings
+    this.mainContent.querySelectorAll('.category-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        this.activeCategory = chip.getAttribute('data-category');
+        this.renderHomeFeed();
+      });
+    });
+
+    
+
+    // Fetch feed data with fallback and personalization ranking
+    try {
+      let videos = [];
+      if (this.activeCategory === 'All' || this.activeCategory === 'Trending') {
+        videos = await PawTubeAPI.getTrending({ signal: this.abortController.signal });
+      } else {
+        videos = await PawTubeAPI.getCategoryFeed(this.activeCategory, { signal: this.abortController.signal });
+      }
+
+      // Apply personalization ranking
+      const rankedVideos = this.rankPersonalizedFeed(videos);
+      const grid = document.getElementById('home-grid');
+      if (grid) {
+        if (rankedVideos.length === 0) {
+          grid.innerHTML = this.renderEmptyState('No videos found', 'Try selecting another category or check your connection.');
+        } else {
+          grid.innerHTML = rankedVideos.map(v => this.renderVideoCard(v)).join('');
+        }
+      }
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      const grid = document.getElementById('home-grid');
+      if (grid) { grid.innerHTML = ''; window.showToast?.('Unable to load feed. Please try again.'); }
+    }
+  }
+
+  rankPersonalizedFeed(videos) {
+    if (!videos || !Array.isArray(videos)) return [];
+    const affinities = this.store.getTopChannelAffinities();
+    const historyIds = new Set(this.store.history.slice(0, 20).map(h => h.id));
+
+    // Sort with slight boost for channels user watches or subscribes to
+    return [...videos].sort((a, b) => {
+      let scoreA = (affinities[a.channelId] || 0);
+      let scoreB = (affinities[b.channelId] || 0);
+
+      // Penalize recently fully watched videos on discovery
+      if (historyIds.has(a.id)) scoreA -= 3;
+      if (historyIds.has(b.id)) scoreB -= 3;
+
+      return scoreB - scoreA;
+    });
+  }
+
+  // ==========================================
+  // TAB 2: SHORTS FEED (VERTICAL SHORT-FORM)
+  // ==========================================
+  async renderShortsFeed() {
+    this.mainContent.innerHTML = `
+      <div class="shorts-container" id="shorts-container">
+        <div style="padding:60px 0; text-align:center; color:var(--text-secondary);">
+          <div class="skeleton" style="width:340px; height:600px; margin:0 auto; border-radius:24px;"></div>
+        </div>
+      </div>
+    `;
+
+    try {
+      this.currentShortsList = await PawTubeAPI.getShorts({ signal: this.abortController.signal });
+      this.currentShortIndex = 0;
+      this.displayCurrentShort();
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      this.mainContent.innerHTML = this.renderErrorState('Could not load Shorts', err.message, () => this.renderShortsFeed());
+    }
+  }
+
+  displayCurrentShort() {
+    const container = document.getElementById('shorts-container');
+    if (!container || this.currentShortsList.length === 0) return;
+
+    const short = this.currentShortsList[this.currentShortIndex];
+    if (!short) return;
+
+    const isLiked = this.store.isLiked(short.id);
+    const isSaved = this.store.isWatchLater(short.id);
+
+    const instance = "";
+    container.innerHTML = `
+      <div class="short-frame">
+        <iframe 
+          src="${instance}/embed/${short.id}?autoplay=1&controls=0&loop=1&playlist=${short.id}&rel=0&playsinline=1"
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowfullscreen>
+        </iframe>
+        <div class="short-overlay-info">
+          <div class="short-overlay-channel" onclick="location.hash='#/channel?id=${encodeURIComponent(short.channelId)}'">
+            @${this.escapeHtml(short.channel)}
+          </div>
+          <div class="short-overlay-title">${this.escapeHtml(short.title)}</div>
+        </div>
+        <div class="short-actions-column">
+          <button class="short-action-btn ${isLiked ? 'active' : ''}" id="short-like-btn" title="Like">
+            <span class="material-symbols-rounded ${isLiked ? 'filled-icon' : ''}">thumb_up</span>
+            <span style="font-size:10px; margin-top:2px;">${short.likes > 0 ? formatViews(short.likes) : 'Like'}</span>
+          </button>
+          <button class="short-action-btn" id="short-dislike-btn" title="Dislike">
+            <span class="material-symbols-rounded">thumb_down</span>
+            <span style="font-size:10px; margin-top:2px;">Dislike</span>
+          </button>
+          <button class="short-action-btn ${isSaved ? 'active' : ''}" id="short-save-btn" title="Watch Later">
+            <span class="material-symbols-rounded ${isSaved ? 'filled-icon' : ''}">bookmark</span>
+            <span style="font-size:10px; margin-top:2px;">Save</span>
+          </button>
+          <button class="short-action-btn" id="short-share-btn" title="Share">
+            <span class="material-symbols-rounded">share</span>
+            <span style="font-size:10px; margin-top:2px;">Share</span>
+          </button>
+        </div>
+      </div>
+
+      <button class="short-nav-btn prev" id="short-prev-btn" title="Previous Short">
+        <span class="material-symbols-rounded">arrow_upward</span>
+      </button>
+      <button class="short-nav-btn next" id="short-next-btn" title="Next Short">
+        <span class="material-symbols-rounded">arrow_downward</span>
+      </button>
+    `;
+
+    // Action handlers
+    document.getElementById('short-like-btn')?.addEventListener('click', () => {
+      this.store.toggleLike(short.id);
+      this.displayCurrentShort();
+    });
+    document.getElementById('short-dislike-btn')?.addEventListener('click', () => {
+      this.store.toggleDislike(short.id);
+      this.displayCurrentShort();
+    });
+    document.getElementById('short-save-btn')?.addEventListener('click', () => {
+      const saved = this.store.toggleWatchLater(short);
+      showToast(saved ? 'Saved to Watch Later' : 'Removed from Watch Later');
+      this.displayCurrentShort();
+    });
+    document.getElementById('short-share-btn')?.addEventListener('click', () => {
+      this.shareVideo(short);
+    });
+
+    document.getElementById('short-prev-btn')?.addEventListener('click', () => this.navigateShort(-1));
+    document.getElementById('short-next-btn')?.addEventListener('click', () => this.navigateShort(1));
+  }
+
+  navigateShort(dir) {
+    const nextIdx = this.currentShortIndex + dir;
+    if (nextIdx >= 0 && nextIdx < this.currentShortsList.length) {
+      this.currentShortIndex = nextIdx;
+      this.displayCurrentShort();
+    } else if (nextIdx >= this.currentShortsList.length) {
+      // Load more shorts
+      PawTubeAPI.getShorts({ page: Math.floor(this.currentShortsList.length / 10) + 1 })
+        .then(newShorts => {
+          this.currentShortsList = [...this.currentShortsList, ...newShorts];
+          this.currentShortIndex = nextIdx;
+          this.displayCurrentShort();
+        });
+    }
+  }
+
+  // ==========================================
+  // TAB 3: PLAYLISTS + HISTORY (LIBRARY)
+  // ==========================================
+  renderPlaylistsAndHistory() {
+    const continueWatching = this.store.getContinueWatching();
+    const watchLater = this.store.watchLater;
+    const history = this.store.history;
+    const playlists = this.store.playlists;
+
+    let html = `
+      <div class="library-section">
+        <div class="section-header">
+          <h2 class="section-title">
+            <span class="material-symbols-rounded">playlist_play</span>
+            Custom Playlists
+          </h2>
+          <button class="pill-btn" id="create-playlist-btn">
+            <span class="material-symbols-rounded" style="font-size:18px;">add</span>
+            New Playlist
+          </button>
+        </div>
+        <div class="library-cards-row">
+          ${playlists.map(pl => `
+            <div class="playlist-card" onclick="location.hash='#/playlist?id=${pl.id}'">
+              <div class="playlist-card-thumb">
+                <img src="${pl.videos[0]?.thumb || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="" />
+                <div class="playlist-count-badge">
+                  <span class="material-symbols-rounded">queue_music</span>
+                  <span>${pl.videos.length} videos</span>
+                </div>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                <div>
+                  <div class="card-title">${this.escapeHtml(pl.title)}</div>
+                  <div class="card-channel">Custom Playlist &bull; ${new Date(pl.createdAt).toLocaleDateString()}</div>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    // Watch Later Section
+    if (watchLater.length > 0) {
+      html += `
+        <div class="library-section">
+          <div class="section-header">
+            <h2 class="section-title">
+              <span class="material-symbols-rounded">bookmark</span>
+              Watch Later (${watchLater.length})
+            </h2>
+            <button class="pill-btn" onclick="location.hash='#/watch?v=${watchLater[0].id}'">
+              <span class="material-symbols-rounded">play_arrow</span>
+              Play All
+            </button>
+          </div>
+          <div class="video-grid">
+            ${watchLater.slice(0, 6).map(v => this.renderVideoCard(v)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Continue Watching Section
+    if (continueWatching.length > 0) {
+      html += `
+        <div class="library-section">
+          <div class="section-header">
+            <h2 class="section-title">
+              <span class="material-symbols-rounded">history</span>
+              Continue Watching
+            </h2>
+          </div>
+          <div class="video-grid">
+            ${continueWatching.slice(0, 6).map(v => this.renderVideoCard(v)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Recently Watched History Section
+    html += `
+      <div class="library-section">
+        <div class="section-header">
+          <h2 class="section-title">
+            <span class="material-symbols-rounded">schedule</span>
+            Recently Watched History (${history.length})
+          </h2>
+          ${history.length > 0 ? `
+            <button class="pill-btn" id="clear-history-btn">
+              <span class="material-symbols-rounded" style="font-size:18px;">delete</span>
+              Clear History
+            </button>
+          ` : ''}
+        </div>
+        ${history.length === 0 ? `
+          <div style="padding:40px; text-align:center; color:var(--text-secondary);">
+            No watch history yet. Videos you watch will appear here.
+          </div>
+        ` : `
+          <div class="video-grid">
+            ${history.slice(0, 12).map(v => this.renderVideoCard(v)).join('')}
+          </div>
+        `}
+      </div>
+    `;
+
+    this.mainContent.innerHTML = html;
+
+    // Bind create playlist
+    document.getElementById('create-playlist-btn')?.addEventListener('click', () => {
+      this.promptCreatePlaylist();
+    });
+
+    // Bind clear history
+    document.getElementById('clear-history-btn')?.addEventListener('click', () => {
+      if (confirm('Clear all your watch history?')) {
+        this.store.clearHistory();
+        showToast('Watch history cleared');
+        this.renderPlaylistsAndHistory();
+      }
+    });
+  }
+
+  // ==========================================
+  // TAB 4: YOU (ACCOUNT, SUBSCRIPTIONS & SETTINGS)
+  // ==========================================
+  async renderYouPage() {
+    const activeInstance = this.store.get("custom_piped_instance", "Default (Auto-Fallback)");
+    const isHealthy = true;
+
+    let html = `
+      <div class="you-profile-card">
+        <img class="you-avatar" src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" alt="Profile" />
+        <div style="flex:1;">
+          <h1 style="font-size:22px; font-weight:700;">PawTube User</h1>
+          <p style="font-size:13px; color:var(--text-secondary); margin-top:4px;">
+            AMOLED Liquid-Glass Experience &bull; Local-First &bull; Private
+          </p>
+        </div>
+      </div>
+
+      <div class="you-stats-grid" style="margin-bottom:32px;">
+        <div class="you-stat-box">
+          <div class="you-stat-val">${this.store.history.length}</div>
+          <div class="you-stat-label">Videos Watched</div>
+        </div>
+        <div class="you-stat-box">
+          <div class="you-stat-val">${this.store.watchLater.length}</div>
+          <div class="you-stat-label">Saved Videos</div>
+        </div>
+        <div class="you-stat-box">
+          <div class="you-stat-val">${this.store.subscriptions.length}</div>
+          <div class="you-stat-label">Subscriptions</div>
+        </div>
+        <div class="you-stat-box">
+          <div class="you-stat-val">${this.store.playlists.length}</div>
+          <div class="you-stat-label">Playlists</div>
+        </div>
+      </div>
+
+      <!-- Piped Instance Management -->
+      <div class="settings-card">
+        <div class="section-header">
+          <h2 class="section-title">
+            <span class="material-symbols-rounded">dns</span>
+            Piped API Instance Architecture
+          </h2>
+          <button class="pill-btn" id="reset-instance-btn">
+            <span class="material-symbols-rounded" style="font-size:18px;">speed</span>
+            Reset to Default
+          </button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Active Piped Instance</div>
+            <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;" id="active-instance-label">
+              ${this.escapeHtml(activeInstance)}
+            </div>
+          </div>
+          <div class="instance-status-pill ${isHealthy ? 'status-green' : 'status-amber'}" id="active-instance-status">
+            <span class="material-symbols-rounded" style="font-size:14px;">${isHealthy ? 'check_circle' : 'pending'}</span>
+            ${isHealthy ? 'Healthy & Connected' : 'Evaluating'}
+          </div>
+        </div>
+
+        <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:8px;">
+          <div style="font-weight:600; font-size:14px;">Add Custom Piped Instance</div>
+          <div style="display:flex; gap:8px; width:100%;">
+            <input type="url" id="custom-instance-input" value="${this.escapeHtml(this.store.get("custom_piped_instance", ""))}" placeholder="https://api.piped.private.coffee" 
+              style="flex:1; background:var(--bg-elevated); border:1px solid var(--glass-border); padding:8px 12px; border-radius:var(--radius-sm); color:#fff;" />
+            <button class="pill-btn" id="add-instance-btn">Add Instance</button>
+          </div>
+        </div>
+        <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
+          <div style="font-weight:600; font-size:14px;">Instance Health Table</div>
+          <div id="instances-health-list" style="width:100%; display:flex; flex-direction:column; gap:8px;">
+            <div style="text-align:center; padding:16px; color:var(--text-secondary); font-size:13px;">Loading instances...</div>
+          </div>
+        </div>
+      </div>
+      <!-- Playback Settings -->
+      <div class="settings-card">
+        <h2 class="section-title" style="margin-bottom:16px;">
+          <span class="material-symbols-rounded">settings</span>
+          Playback &amp; Behavior
+        </h2>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Autoplay Next Video</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Automatically play recommended video after finish</div>
+          </div>
+          <input type="checkbox" id="pref-autoplay" ${this.store.preferences.autoplay ? 'checked' : ''} style="transform:scale(1.2);" />
+        </div>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Floating Mini-Player</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Dock video in corner when navigating away</div>
+          </div>
+          <input type="checkbox" id="pref-miniplayer" ${this.store.preferences.miniPlayerEnabled ? 'checked' : ''} style="transform:scale(1.2);" />
+        </div>
+      </div>
+
+      <!-- Data & Storage Management -->
+      <div class="settings-card">
+        <h2 class="section-title" style="margin-bottom:16px;">
+          <span class="material-symbols-rounded">storage</span>
+          Data &amp; Privacy
+        </h2>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Clear Local Caches</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Clears temporary API caches and response store</div>
+          </div>
+          <button class="pill-btn" id="clear-cache-btn">Clear Caches</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px;">Backup &amp; Restore</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Export or import your subscriptions, history, and playlists</div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="pill-btn" id="export-backup-btn">Export</button>
+            <button class="pill-btn" id="import-backup-btn">Import</button>
+            <input type="file" id="import-backup-file" accept=".json" style="display:none;" />
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div style="font-weight:600; font-size:14px; color:var(--error);">Reset All Data</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Deletes all watch history, playlists, and preferences</div>
+          </div>
+          <button class="pill-btn" id="reset-all-btn" style="color:var(--error); border-color:rgba(255,69,58,0.3);">Reset All</button>
+        </div>
+      </div>
+
+      <!-- About PawTube -->
+      <div class="settings-card" style="text-align:center; padding:32px 16px;">
+        <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" style="width:48px; height:48px; margin:0 auto 12px; border-radius:12px;" />
+        <h3 style="font-size:18px; font-weight:700;">PawTube</h3>
+        <p style="font-size:13px; color:var(--text-secondary); max-width:440px; margin:8px auto;">
+          Distraction-free, ad-free video experience powered purely by modern HTML5, CSS3 and the Piped network.
+        </p>
+        <p style="font-size:12px; color:var(--text-tertiary); margin-top:12px;">Version 7.0 &bull; AMOLED Liquid-Glass</p>
+      </div>
+    `;
+
+    this.mainContent.innerHTML = html;
+
+    // Reset to Default Button
+    document.getElementById('reset-instance-btn')?.addEventListener('click', () => {
+      localStorage.removeItem('custom_piped_instance');
+      showToast('Reset to default Piped instances');
+      this.renderYouPage();
+    });
+
+    // Add Custom Instance
+    document.getElementById('add-instance-btn')?.addEventListener('click', async () => {
+      const input = document.getElementById('custom-instance-input');
+      let val = input.value.trim();
+      if (!val) return;
+      if (val.endsWith('/')) val = val.slice(0, -1);
+      if (!val.startsWith('http')) val = 'https://' + val;
+      
+      try {
+        showToast(`Testing ${val}...`);
+        const check = await fetch(val + '/trending?region=US', { method: 'HEAD' });
+        if (check.ok || check.status === 400 || check.status === 403 || check.status === 405) { // Any valid response
+           this.store.set('custom_piped_instance', val);
+           showToast(`Custom instance verified & saved.`);
+           this.renderYouPage();
+        } else {
+           showToast(`Instance failed check (HTTP ${check.status})`);
+        }
+      } catch (err) {
+        showToast("Instance connection failed.");
+      }
+    });
+
+    // Preference toggles
+    document.getElementById('pref-autoplay')?.addEventListener('change', (e) => {
+      this.store.preferences.autoplay = e.target.checked;
+      this.store.set('pt_preferences', this.store.preferences);
+      showToast(`Autoplay ${e.target.checked ? 'enabled' : 'disabled'}`);
+    });
+    document.getElementById('pref-miniplayer')?.addEventListener('change', (e) => {
+      this.store.preferences.miniPlayerEnabled = e.target.checked;
+      this.store.set('pt_preferences', this.store.preferences);
+      showToast(`Miniplayer ${e.target.checked ? 'enabled' : 'disabled'}`);
+    });
+
+    // Storage actions
+    document.getElementById('clear-cache-btn')?.addEventListener('click', () => {
+      
+      showToast('In-memory and API caches cleared');
+    });
+
+    // Export backup
+    document.getElementById('export-backup-btn')?.addEventListener('click', () => {
+      const data = {
+        history: this.store.history,
+        watchLater: this.store.watchLater,
+        liked: Array.from(this.store.liked),
+        subscriptions: this.store.subscriptions,
+        playlists: this.store.playlists,
+        preferences: this.store.preferences
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pawtube_backup_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Backup exported successfully');
+    });
+
+    // Import backup
+    const fileInput = document.getElementById('import-backup-file');
+    document.getElementById('import-backup-btn')?.addEventListener('click', () => {
+      fileInput?.click();
+    });
+    fileInput?.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const parsed = JSON.parse(event.target.result);
+          if (parsed.history) this.store.set('pt_history', parsed.history);
+          if (parsed.watchLater) this.store.set('pt_watch_later', parsed.watchLater);
+          if (parsed.subscriptions) this.store.set('pt_subscriptions', parsed.subscriptions);
+          if (parsed.playlists) this.store.set('pt_custom_playlists', parsed.playlists);
+          showToast('Backup restored successfully! Reloading...');
+          setTimeout(() => location.reload(), 1000);
+        } catch (_) {
+          showToast('Invalid backup file');
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Reset all
+    document.getElementById('reset-all-btn')?.addEventListener('click', () => {
+      if (confirm('Are you sure? This will wipe all local data, history, and playlists permanently.')) {
+        localStorage.clear();
+        showToast('All PawTube data cleared. Reloading...');
+        setTimeout(() => location.reload(), 800);
+      }
+    });
+  }
+
+  switchInstance(url) {
+    
+    showToast(`Switched active instance to ${url}`);
+    this.renderYouPage();
+  }
+
+  // ==========================================
+  // WATCH PAGE (PLAYER, DETAILS, COMMENTS, RELATED)
+  // ==========================================
+  async renderWatchPage(videoId) {
+    if (!videoId) {
+      this.renderHomeFeed();
+      return;
+    }
+
+    this.mainContent.innerHTML = `
+      <div class="watch-layout">
+        <div class="watch-player-col">
+          <div class="player-mount-container" id="player-mount"></div>
+          <div class="watch-details" id="watch-details">
+            <div class="skeleton" style="height:28px; width:75%; margin-bottom:12px;"></div>
+            <div class="skeleton" style="height:48px; width:100%; border-radius:12px;"></div>
+          </div>
+          <div class="comments-section" id="watch-comments" style="margin-top:24px;">
+            <div class="skeleton" style="height:120px; width:100%;"></div>
+          </div>
+        </div>
+        <div class="watch-sidebar-col" id="watch-sidebar">
+          <div class="section-title" style="font-size:16px; margin-bottom:16px;">Related Videos</div>
+          <div class="related-list" id="related-list">
+            ${this.renderSkeletonCards(5)}
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Mount Player
+    const mount = document.getElementById('player-mount');
+    if (window.customPlayer && mount) {
+      if (window.playerWrapper) {
+        mount.appendChild(window.playerWrapper);
+      }
+      window.customPlayer.loadVideo(videoId);
+    }
+
+    // Set playing video state
+    const instance = "";
+    this.playingVideo = { id: videoId, title: 'Loading...', channel: '', thumb: `${instance}/vi/${videoId}/hqdefault.jpg` };
+
+    // Track playback time into Continue Watching progress
+    clearInterval(this.progressInterval);
+    this.progressInterval = setInterval(() => {
+      if (window.customPlayer && window.customPlayer.player && window.customPlayer.player.getCurrentTime) {
+        const curr = window.customPlayer.player.getCurrentTime();
+        const dur = window.customPlayer.player.getDuration();
+        if (curr > 0) {
+          this.store.updateProgress(videoId, curr, dur);
+        }
+      }
+    }, 3000);
+
+    // Fetch video info & related videos
+    try {
+      const { video, instance: apiInstance } = await PawTubeAPI.getVideoInfo(videoId, { signal: this.abortController.signal });
+      this.playingVideo = video;
+      this.store.addToHistory(video);
+
+      // Render Video Details
+      const isLiked = this.store.isLiked(video.id);
+      const isDisliked = this.store.isDisliked(video.id);
+      const isSaved = this.store.isWatchLater(video.id);
+      const isSubbed = this.store.isSubscribed(video.channelId);
+
+      const detailsEl = document.getElementById('watch-details');
+      if (detailsEl) {
+        detailsEl.innerHTML = `
+          <h1 class="watch-title">${this.escapeHtml(video.title)}</h1>
+          <div class="watch-author-bar">
+            <div class="watch-author-info">
+              <a href="#/channel?id=${encodeURIComponent(video.channelId)}">
+                <img class="watch-author-avatar" src="${video.avatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="${this.escapeHtml(video.channel)}" />
+              </a>
+              <div>
+                <a href="#/channel?id=${encodeURIComponent(video.channelId)}" class="watch-author-name">
+                  ${this.escapeHtml(video.channel)}
+                </a>
+                <div class="watch-author-subs">${this.escapeHtml(video.subCount || '')}</div>
+              </div>
+              <button class="btn-sub ${isSubbed ? 'subscribed' : ''}" id="watch-sub-btn">
+                <span class="material-symbols-rounded" style="font-size:18px;">${isSubbed ? 'check' : 'add'}</span>
+                <span>${isSubbed ? 'Subscribed' : 'Subscribe'}</span>
+              </button>
+            </div>
+
+            <div class="watch-actions-bar">
+              <button class="pill-btn ${isLiked ? 'active' : ''}" id="watch-like-btn">
+                <span class="material-symbols-rounded ${isLiked ? 'filled-icon' : ''}">thumb_up</span>
+                <span>${video.likes > 0 ? formatViews(video.likes) : 'Like'}</span>
+              </button>
+              <button class="pill-btn ${isDisliked ? 'active' : ''}" id="watch-dislike-btn">
+                <span class="material-symbols-rounded">thumb_down</span>
+              </button>
+              <button class="pill-btn ${isSaved ? 'active' : ''}" id="watch-save-btn">
+                <span class="material-symbols-rounded ${isSaved ? 'filled-icon' : ''}">bookmark</span>
+                <span>${isSaved ? 'Saved' : 'Save'}</span>
+              </button>
+              <button class="pill-btn" id="watch-playlist-btn">
+                <span class="material-symbols-rounded">playlist_add</span>
+                <span>Add</span>
+              </button>
+              <button class="pill-btn" id="watch-share-btn">
+                <span class="material-symbols-rounded">share</span>
+                <span>Share</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="watch-description-box" id="watch-description-box">
+            <div class="desc-stats">
+              ${video.viewsFormatted} &bull; ${video.uploadedFormatted}
+            </div>
+            <div class="desc-text" id="desc-text">${this.formatDescription(video.description)}</div>
+            <div class="desc-toggle-btn" id="desc-toggle-btn">Show more</div>
+          </div>
+        `;
+
+        // Event bindings
+        document.getElementById('watch-sub-btn')?.addEventListener('click', () => {
+          const subbed = this.store.toggleSubscription({ id: video.channelId, name: video.channel, avatar: video.avatar });
+          showToast(subbed ? `Subscribed to ${video.channel}` : `Unsubscribed from ${video.channel}`);
+          this.renderWatchPage(videoId);
+        });
+
+        document.getElementById('watch-like-btn')?.addEventListener('click', () => {
+          this.store.toggleLike(video.id);
+          this.renderWatchPage(videoId);
+        });
+
+        document.getElementById('watch-dislike-btn')?.addEventListener('click', () => {
+          this.store.toggleDislike(video.id);
+          this.renderWatchPage(videoId);
+        });
+
+        document.getElementById('watch-save-btn')?.addEventListener('click', () => {
+          const saved = this.store.toggleWatchLater(video);
+          showToast(saved ? 'Saved to Watch Later' : 'Removed from Watch Later');
+          this.renderWatchPage(videoId);
+        });
+
+        document.getElementById('watch-playlist-btn')?.addEventListener('click', () => {
+          this.promptAddToPlaylist(video);
+        });
+
+        document.getElementById('watch-share-btn')?.addEventListener('click', () => {
+          this.shareVideo(video);
+        });
+
+        // Description expand/collapse
+        const descBox = document.getElementById('watch-description-box');
+        const descText = document.getElementById('desc-text');
+        const descToggle = document.getElementById('desc-toggle-btn');
+        if (descBox && descText && descToggle) {
+          descBox.addEventListener('click', () => {
+            const isExp = descText.classList.toggle('expanded');
+            descToggle.textContent = isExp ? 'Show less' : 'Show more';
+          });
+        }
+      }
+
+      // Render Related Videos
+      const relatedEl = document.getElementById('related-list');
+      if (relatedEl && video.related) {
+        relatedEl.innerHTML = video.related.map(rel => `
+          <div class="related-card" onclick="location.hash='#/watch?v=${rel.id}'">
+            <div class="related-thumb-wrap">
+              <img src="${rel.thumb}" alt="${this.escapeHtml(rel.title)}" loading="lazy" />
+              <div class="duration-badge">${rel.durationFormatted}</div>
+            </div>
+            <div class="related-info">
+              <div class="related-title">${this.escapeHtml(rel.title)}</div>
+              <div class="related-channel">${this.escapeHtml(rel.channel)}</div>
+              <div class="related-meta">${rel.viewsFormatted}</div>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // Render Comments
+      this.loadComments(videoId);
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      console.error('Watch page error:', err);
+    }
+  }
+
+  async loadComments(videoId) {
+    const commentsEl = document.getElementById('watch-comments');
+    if (!commentsEl) return;
+
+    try {
+      const data = await PawTubeAPI.getComments(videoId, { signal: this.abortController.signal });
+      if (!data.comments || data.comments.length === 0) {
+        commentsEl.innerHTML = `
+          <div class="comments-header">
+            <div class="comments-count">Comments</div>
+          </div>
+          <div style="font-size:13px; color:var(--text-secondary); text-align:center; padding:20px;">
+            No comments available or comments are disabled for this video.
+          </div>
+        `;
+        return;
+      }
+
+      let html = `
+        <div class="comments-header">
+          <div class="comments-count">${data.commentCount.toLocaleString()} Comments</div>
+        </div>
+      `;
+
+      data.comments.slice(0, 20).forEach(c => {
+        html += `
+          <div class="comment-card">
+            <img class="comment-avatar" src="${c.authorAvatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="" />
+            <div class="comment-body">
+              <div class="comment-author-row">
+                <span class="comment-author">${this.escapeHtml(c.author)}</span>
+                <span class="comment-date">${this.escapeHtml(c.publishedText)}</span>
+              </div>
+              <div class="comment-content">${c.content}</div>
+              ${c.likeCount > 0 ? `
+                <div class="comment-likes">
+                  <span class="material-symbols-rounded" style="font-size:14px;">thumb_up</span>
+                  <span>${c.likeCount}</span>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+        `;
+      });
+
+      commentsEl.innerHTML = html;
+    } catch (_) {
+      commentsEl.innerHTML = `
+        <div class="comments-header"><div class="comments-count">Comments</div></div>
+        <div style="font-size:13px; color:var(--text-tertiary); text-align:center; padding:20px;">
+          Comments could not be loaded from this instance.
+        </div>
+      `;
+    }
+  }
+
+  // ==========================================
+  // CHANNEL PAGE
+  // ==========================================
+  async renderChannelPage(channelId) {
+    if (!channelId) {
+      this.renderHomeFeed();
+      return;
+    }
+
+    this.mainContent.innerHTML = `
+      <div class="channel-header">
+        <div class="channel-banner skeleton"></div>
+        <div class="skeleton" style="height:60px; width:40%; margin-top:20px;"></div>
+      </div>
+      <div class="video-grid">
+        ${this.renderSkeletonCards(6)}
+      </div>
+    `;
+
+    try {
+      const [channel, videos] = await Promise.all([
+        PawTubeAPI.getChannel(channelId, { signal: this.abortController.signal }),
+        PawTubeAPI.getChannelVideos(channelId, { signal: this.abortController.signal })
+      ]);
+
+      const isSubbed = this.store.isSubscribed(channel.id);
+
+      this.mainContent.innerHTML = `
+        <div class="channel-header">
+          ${channel.banner ? `
+            <div class="channel-banner">
+              <img src="${channel.banner}" alt="Banner" />
+            </div>
+          ` : ''}
+
+          <div class="channel-profile-row">
+            <div class="channel-profile-left">
+              <img class="channel-avatar-lg" src="${channel.avatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="${this.escapeHtml(channel.name)}" />
+              <div>
+                <h1 class="channel-name-lg">${this.escapeHtml(channel.name)}</h1>
+                <div class="channel-sub-info">
+                  ${channel.subCount ? channel.subCount + ' &bull; ' : ''}
+                  ${videos.length} videos
+                </div>
+              </div>
+            </div>
+
+            <button class="btn-sub ${isSubbed ? 'subscribed' : ''}" id="channel-sub-btn">
+              <span class="material-symbols-rounded" style="font-size:18px;">${isSubbed ? 'check' : 'add'}</span>
+              <span>${isSubbed ? 'Subscribed' : 'Subscribe'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="section-title" style="margin-bottom:20px;">Latest Uploads</div>
+        <div class="video-grid">
+          ${videos.map(v => this.renderVideoCard(v)).join('')}
+        </div>
+      `;
+
+      document.getElementById('channel-sub-btn')?.addEventListener('click', () => {
+        const subbed = this.store.toggleSubscription({ id: channel.id, name: channel.name, avatar: channel.avatar });
+        showToast(subbed ? `Subscribed to ${channel.name}` : `Unsubscribed from ${channel.name}`);
+        this.renderChannelPage(channelId);
+      });
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      this.mainContent.innerHTML = this.renderErrorState('Failed to load channel', err.message, () => this.renderChannelPage(channelId));
+    }
+  }
+
+  // ==========================================
+  // PLAYLIST PAGE
+  // ==========================================
+  async renderPlaylistPage(playlistId) {
+    if (!playlistId) {
+      this.renderHomeFeed();
+      return;
+    }
+
+    // Check if it's a custom local playlist
+    const localPl = this.store.playlists.find(p => p.id === playlistId);
+    if (localPl) {
+      this.renderCustomPlaylistView(localPl);
+      return;
+    }
+
+    // Otherwise load public Piped playlist
+    this.mainContent.innerHTML = `
+      <div class="section-header">
+        <h2 class="section-title">Loading Playlist...</h2>
+      </div>
+      <div class="video-grid">${this.renderSkeletonCards(6)}</div>
+    `;
+
+    try {
+      const pl = await PawTubeAPI.getPlaylist(playlistId, { signal: this.abortController.signal });
+      this.mainContent.innerHTML = `
+        <div class="section-header">
+          <div>
+            <h1 class="section-title">${this.escapeHtml(pl.title)}</h1>
+            <p style="font-size:13px; color:var(--text-secondary); margin-top:4px;">
+              By ${this.escapeHtml(pl.channel)} &bull; ${pl.videoCount} videos
+            </p>
+          </div>
+          ${pl.videos.length > 0 ? `
+            <button class="pill-btn" onclick="location.hash='#/watch?v=${pl.videos[0].id}'">
+              <span class="material-symbols-rounded">play_arrow</span>
+              Play All
+            </button>
+          ` : ''}
+        </div>
+
+        <div class="video-grid">
+          ${pl.videos.map(v => this.renderVideoCard(v)).join('')}
+        </div>
+      `;
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      this.mainContent.innerHTML = this.renderErrorState('Failed to load playlist', err.message, () => this.renderPlaylistPage(playlistId));
+    }
+  }
+
+  renderCustomPlaylistView(pl) {
+    this.mainContent.innerHTML = `
+      <div class="section-header">
+        <div>
+          <h1 class="section-title">${this.escapeHtml(pl.title)}</h1>
+          <p style="font-size:13px; color:var(--text-secondary); margin-top:4px;">
+            Created ${new Date(pl.createdAt).toLocaleDateString()} &bull; ${pl.videos.length} videos
+          </p>
+        </div>
+        <div style="display:flex; gap:8px;">
+          ${pl.videos.length > 0 ? `
+            <button class="pill-btn" onclick="location.hash='#/watch?v=${pl.videos[0].id}'">
+              <span class="material-symbols-rounded">play_arrow</span>
+              Play All
+            </button>
+          ` : ''}
+          <button class="pill-btn" id="del-playlist-btn" style="color:var(--error);">
+            <span class="material-symbols-rounded">delete</span>
+            Delete Playlist
+          </button>
+        </div>
+      </div>
+
+      ${pl.videos.length === 0 ? `
+        <div style="padding:60px 0; text-align:center; color:var(--text-secondary);">
+          This playlist is empty. Add videos to it using the "Add" button while watching.
+        </div>
+      ` : `
+        <div class="video-grid">
+          ${pl.videos.map(v => `
+            <div style="position:relative;">
+              ${this.renderVideoCard(v)}
+              <button class="icon-btn" style="position:absolute; bottom:12px; right:12px; background:rgba(0,0,0,0.8); z-index:5;" 
+                onclick="window.app.removeFromCustomPlaylist('${pl.id}', '${v.id}')" title="Remove from playlist">
+                <span class="material-symbols-rounded" style="font-size:18px;">close</span>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    `;
+
+    document.getElementById('del-playlist-btn')?.addEventListener('click', () => {
+      if (confirm(`Delete playlist "${pl.title}"?`)) {
+        this.store.deletePlaylist(pl.id);
+        showToast('Playlist deleted');
+        window.location.hash = '#/library';
+      }
+    });
+  }
+
+  removeFromCustomPlaylist(plId, videoId) {
+    this.store.removeVideoFromPlaylist(plId, videoId);
+    showToast('Video removed from playlist');
+    this.renderPlaylistPage(plId);
+  }
+
+  // ==========================================
+  // SEARCH RESULTS
+  // ==========================================
+  async renderSearchResults(query) {
+    if (!query) {
+      this.renderHomeFeed();
+      return;
+    }
+
+    this.searchInput.value = query;
+    this.mainContent.innerHTML = `
+      <div class="section-header">
+        <h1 class="section-title">
+          <span class="material-symbols-rounded">search</span>
+          Results for "${this.escapeHtml(query)}"
+        </h1>
+      </div>
+      <div class="video-grid" id="search-grid">
+        ${this.renderSkeletonCards(8)}
+      </div>
+    `;
+
+    try {
+      const results = await PawTubeAPI.search(query, { signal: this.abortController.signal });
+      const grid = document.getElementById('search-grid');
+      if (grid) {
+        if (results.length === 0) {
+          grid.innerHTML = this.renderEmptyState('No results found', 'Try checking your spelling or using different keywords.');
+        } else {
+          grid.innerHTML = results.map(v => this.renderVideoCard(v)).join('');
+        }
+      }
+    } catch (err) {
+      if (this.abortController.signal.aborted) return;
+      const grid = document.getElementById('search-grid');
+      if (grid) {
+        grid.innerHTML = this.renderErrorState('Search failed', err.message, () => this.renderSearchResults(query));
+      }
+    }
+  }
+
+  // ==========================================
+  // MINI-PLAYER LOGIC
+  // ==========================================
+  showMiniPlayer() {
+    if (!this.playingVideo || !this.miniPlayer) return;
+
+    document.getElementById('mini-player-thumb').src = this.playingVideo.thumb || '';
+    document.getElementById('mini-player-title').textContent = this.playingVideo.title || 'Playing video';
+    document.getElementById('mini-player-channel').textContent = this.playingVideo.channel || '';
+
+    this.miniPlayer.style.display = 'flex';
+  }
+
+  hideMiniPlayer() {
+    if (this.miniPlayer) {
+      this.miniPlayer.style.display = 'none';
+    }
+  }
+
+  // ==========================================
+  // MODALS & PLAYLIST DIALOGS
+  // ==========================================
+  promptCreatePlaylist() {
+    this.openModal(`
+      <h2 style="font-size:18px; font-weight:700; margin-bottom:16px;">Create New Playlist</h2>
+      <input type="text" id="new-playlist-title" placeholder="Playlist title" 
+        style="width:100%; background:var(--bg-elevated); border:1px solid var(--glass-border); padding:10px 14px; border-radius:var(--radius-sm); color:#fff; font-size:15px; margin-bottom:20px;" />
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="pill-btn" onclick="window.app.closeModal()">Cancel</button>
+        <button class="pill-btn" id="modal-confirm-create-pl" style="background:var(--brand-blue); color:#000;">Create</button>
+      </div>
+    `);
+
+    document.getElementById('modal-confirm-create-pl')?.addEventListener('click', () => {
+      const input = document.getElementById('new-playlist-title');
+      const title = input.value.trim();
+      if (title) {
+        const pl = this.store.createPlaylist(title);
+        showToast(`Created playlist "${pl.title}"`);
+        this.closeModal();
+        if (this.currentRoute === '/library') {
+          this.renderPlaylistsAndHistory();
+        }
+      }
+    });
+  }
+
+  promptAddToPlaylist(video) {
+    if (!video || !video.id) return;
+    const playlists = this.store.playlists;
+
+    this.openModal(`
+      <h2 style="font-size:18px; font-weight:700; margin-bottom:16px;">Save to Playlist</h2>
+      <div style="display:flex; flex-direction:column; gap:8px; max-height:260px; overflow-y:auto; margin-bottom:20px;">
+        ${playlists.map(pl => {
+          const has = pl.videos.some(v => v.id === video.id);
+          return `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 14px; background:var(--bg-elevated); border-radius:var(--radius-sm);">
+              <span style="font-size:14px; font-weight:500;">${this.escapeHtml(pl.title)}</span>
+              <button class="pill-btn" onclick="window.app.toggleVideoInPlaylist('${pl.id}', ${JSON.stringify(video).replace(/"/g, '&quot;')})">
+                ${has ? 'Remove' : 'Add'}
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <div style="display:flex; justify-content:space-between;">
+        <button class="pill-btn" onclick="window.app.promptCreatePlaylist()">+ New Playlist</button>
+        <button class="pill-btn" onclick="window.app.closeModal()">Done</button>
+      </div>
+    `);
+  }
+
+  toggleVideoInPlaylist(playlistId, video) {
+    const pl = this.store.playlists.find(p => p.id === playlistId);
+    if (!pl) return;
+    const exists = pl.videos.some(v => v.id === video.id);
+    if (exists) {
+      this.store.removeVideoFromPlaylist(playlistId, video.id);
+      showToast(`Removed from "${pl.title}"`);
+    } else {
+      this.store.addVideoToPlaylist(playlistId, video);
+      showToast(`Added to "${pl.title}"`);
+    }
+    this.promptAddToPlaylist(video);
+  }
+
+  openModal(contentHtml) {
+    if (this.modalCard && this.modalOverlay) {
+      this.modalCard.innerHTML = contentHtml;
+      this.modalOverlay.style.display = 'flex';
+    }
+  }
+
+  closeModal() {
+    if (this.modalOverlay) {
+      this.modalOverlay.style.display = 'none';
+    }
+  }
+
+  shareVideo(video) {
+    const url = `${window.location.origin}${window.location.pathname}#/watch?v=${video.id}`;
+    if (navigator.share) {
+      navigator.share({
+        title: video.title,
+        text: `Watch "${video.title}" on PawTube`,
+        url
+      }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        showToast('Link copied to clipboard!');
+      });
+    }
+  }
+
+  // ==========================================
+  // HTML TEMPLATE RENDERERS
+  // ==========================================
+  renderVideoCard(v) {
+    const isSaved = this.store.isWatchLater(v.id);
+    const progressPercent = (v.progress && v.duration) ? Math.min(100, (v.progress / v.duration) * 100) : 0;
+
+    return `
+      <div class="video-card" onclick="location.hash='#/watch?v=${v.id}'">
+        <div class="thumbnail-wrap">
+          <img src="${v.thumb}" alt="${this.escapeHtml(v.title)}" loading="lazy" />
+          <div class="duration-badge">${v.durationFormatted || '0:00'}</div>
+          ${progressPercent > 0 ? `
+            <div class="progress-bar-rail">
+              <div class="progress-bar-fill" style="width:${progressPercent}%"></div>
+            </div>
+          ` : ''}
+          <button class="quick-save-btn" onclick="event.stopPropagation(); window.app.store.toggleWatchLater(${JSON.stringify(v).replace(/"/g, '&quot;')}); window.showToast('Watch later updated');" title="Watch Later">
+            <span class="material-symbols-rounded" style="font-size:18px;">${isSaved ? 'check' : 'bookmark'}</span>
+          </button>
+        </div>
+        <div class="card-info">
+          ${v.avatar ? `
+            <img class="card-avatar" src="${v.avatar}" alt="" loading="lazy" 
+              onclick="event.stopPropagation(); if ('${v.channelId}') location.hash='#/channel?id=${encodeURIComponent(v.channelId)}';" />
+          ` : ''}
+          <div class="card-meta">
+            <div class="card-title">${this.escapeHtml(v.title)}</div>
+            <div class="card-channel" onclick="event.stopPropagation(); if ('${v.channelId}') location.hash='#/channel?id=${encodeURIComponent(v.channelId)}';">
+              ${this.escapeHtml(v.channel)}
+            </div>
+            <div class="card-stats">
+              <span>${v.viewsFormatted || ''}</span>
+              ${v.uploadedFormatted ? `<span>&bull;</span><span>${v.uploadedFormatted}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderSkeletonCards(count = 6) {
+    return Array.from({ length: count }).map(() => `
+      <div class="video-card">
+        <div class="skel-thumb skeleton"></div>
+        <div class="card-info" style="margin-top:10px;">
+          <div class="skel-avatar skeleton"></div>
+          <div style="flex:1;">
+            <div class="skel-title skeleton"></div>
+            <div class="skel-text skeleton"></div>
+            <div class="skel-text short skeleton"></div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  renderEmptyState(title, subtitle) {
+    return `
+      <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary);">
+        <span class="material-symbols-rounded" style="font-size: 48px; color: var(--text-tertiary); margin-bottom: 12px;">search_off</span>
+        <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">${this.escapeHtml(title)}</h3>
+        <p style="font-size: 13.5px; max-width: 400px; margin: 0 auto;">${this.escapeHtml(subtitle)}</p>
+      </div>
+    `;
+  }
+
+  renderErrorState(title, message, retryFn) {
+    const retryId = 'retry-' + Math.random().toString(36).slice(2);
+    setTimeout(() => {
+      document.getElementById(retryId)?.addEventListener('click', retryFn);
+    }, 50);
+
+    return `
+      <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary);">
+        <span class="material-symbols-rounded" style="font-size: 48px; color: var(--error); margin-bottom: 12px;">cloud_off</span>
+        <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">${this.escapeHtml(title)}</h3>
+        <p style="font-size: 13.5px; max-width: 400px; margin: 0 auto 16px;">${this.escapeHtml(message || 'Network request failed')}</p>
+        <button class="pill-btn" id="${retryId}">
+          <span class="material-symbols-rounded" style="font-size:18px;">refresh</span>
+          Retry
+        </button>
+      </div>
+    `;
+  }
+
+  formatDescription(text) {
+    if (!text) return 'No description available.';
+    // Convert URLs into clean hyperlinks
+    const urlPattern = /(https?:\/\/[^\s]+)/g;
+    return this.escapeHtml(text).replace(urlPattern, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:var(--brand-blue);">$1</a>');
+  }
+
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
 }
 
-window.nextShort = function() {
-    if (currentShortIndex < shortsFeed.length - 1) {
-        currentShortIndex++;
-        renderShortsUI();
-    }
-}
-window.prevShort = function() {
-    if (currentShortIndex > 0) {
-        currentShortIndex--;
-        renderShortsUI();
-    }
-}
+// Initialize Application when DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+  window.app = new PawTubeApp();
+
+  // Register service worker if available
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+});

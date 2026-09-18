@@ -1,0 +1,6 @@
+{
+  "name": "PawTube",
+  "description": "A clean, distraction-free YouTube experience powered by Invidious with AMOLED liquid-glass UI",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
