@@ -296,17 +296,33 @@ class PawTubeApp {
     // Listen for hash changes (SPA routing)
     window.addEventListener('hashchange', () => this.handleRoute());
 
-    // Intercept standard query parameters (e.g., ?v=ID) and convert to hash routes
-    if (window.location.search) {
-      const searchParams = new URLSearchParams(window.location.search);
-      if (searchParams.has('v')) {
-        window.location.replace(window.location.pathname + `#/watch?v=${searchParams.get('v')}`);
+    // Intercept standard pathname or query parameters on initial boot
+    const pathname = window.location.pathname || '';
+    const search = window.location.search || '';
+
+    // Direct /watch or /watch/ID or /watch?v=ID
+    if (pathname.startsWith('/watch')) {
+      const extracted = window.extractVideoId ? window.extractVideoId(pathname + search) : null;
+      if (extracted) {
+        window.location.replace(`/#/watch?v=${extracted}`);
         return;
+      }
+    }
+
+    // Intercept query parameters (e.g., ?v=ID, ?channel=ID, ?list=ID)
+    if (search) {
+      const searchParams = new URLSearchParams(search);
+      if (searchParams.has('v')) {
+        const extracted = window.extractVideoId ? window.extractVideoId(searchParams.get('v')) : searchParams.get('v');
+        if (extracted) {
+          window.location.replace(`/#/watch?v=${extracted}`);
+          return;
+        }
       } else if (searchParams.has('channel')) {
-        window.location.replace(window.location.pathname + `#/channel?id=${searchParams.get('channel')}`);
+        window.location.replace(`/#/channel?id=${encodeURIComponent(searchParams.get('channel'))}`);
         return;
       } else if (searchParams.has('list')) {
-        window.location.replace(window.location.pathname + `#/playlist?id=${searchParams.get('list')}`);
+        window.location.replace(`/#/playlist?id=${encodeURIComponent(searchParams.get('list'))}`);
         return;
       }
     }
@@ -521,6 +537,23 @@ class PawTubeApp {
       path = '/' + path;
     }
 
+    // Support both /watch?v=VIDEO_ID and /watch/VIDEO_ID
+    if (path.startsWith('/watch')) {
+      let candidateId = params.get('v');
+      if (!candidateId && path.startsWith('/watch/')) {
+        candidateId = path.replace(/^\/watch\//, '');
+      }
+      const videoId = window.extractVideoId ? window.extractVideoId(candidateId || hash) : candidateId;
+
+      this.currentRoute = '/watch';
+      this.currentParams = { v: videoId };
+      this.updateNavigationUI('/watch');
+      this.hideMiniPlayer();
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      this.renderWatchPage(videoId);
+      return;
+    }
+
     this.currentRoute = path;
     this.currentParams = Object.fromEntries(params.entries());
 
@@ -551,9 +584,6 @@ class PawTubeApp {
         break;
       case '/you':
         this.renderYouPage();
-        break;
-      case '/watch':
-        this.renderWatchPage(this.currentParams.v);
         break;
       case '/channel':
         this.renderChannelPage(this.currentParams.id);
@@ -765,12 +795,13 @@ class PawTubeApp {
     const isLiked = this.store.isLiked(short.id);
     const isSaved = this.store.isWatchLater(short.id);
 
-    const instance = "";
+    const embedUrl = (window.buildEmbedUrl ? window.buildEmbedUrl(short.id, { autoplay: 1, controls: 0 }) : `https://www.youtube-nocookie.com/embed/${encodeURIComponent(short.id)}?autoplay=1&controls=0&rel=0&playsinline=1&modestbranding=1`) + `&loop=1&playlist=${encodeURIComponent(short.id)}`;
     container.innerHTML = `
       <div class="short-frame">
         <iframe 
-          src="${instance}/embed/${short.id}?autoplay=1&controls=0&loop=1&playlist=${short.id}&rel=0&playsinline=1"
-          allow="autoplay; encrypted-media; picture-in-picture"
+          src="${embedUrl}"
+          title="${this.escapeHtml(short.title)}"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowfullscreen>
         </iframe>
         <div class="short-overlay-info">
@@ -1228,8 +1259,19 @@ class PawTubeApp {
   // WATCH PAGE (PLAYER, DETAILS, COMMENTS, RELATED)
   // ==========================================
   async renderWatchPage(videoId) {
-    if (!videoId) {
-      this.renderHomeFeed();
+    const cleanId = window.extractVideoId ? window.extractVideoId(videoId) : videoId;
+    if (!cleanId) {
+      this.mainContent.innerHTML = `
+        <div style="padding: 60px 20px; text-align: center; max-width: 600px; margin: 0 auto;">
+          <span class="material-symbols-rounded" style="font-size: 56px; color: var(--text-secondary); margin-bottom: 16px;">error_outline</span>
+          <h2 style="font-size: 22px; font-weight: 600; margin-bottom: 8px;">Invalid Video URL</h2>
+          <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 24px;">The specified video ID is missing or invalid. Please check the URL and try again.</p>
+          <button class="pill-btn primary" onclick="location.hash='#/home'">
+            <span class="material-symbols-rounded">home</span>
+            <span>Return to Home</span>
+          </button>
+        </div>
+      `;
       return;
     }
 
@@ -1254,142 +1296,34 @@ class PawTubeApp {
       </div>
     `;
 
-    // Mount Player
+    // 1. Immediately mount and play YouTube No-Cookie Player (Synchronous & Decoupled)
     const mount = document.getElementById('player-mount');
-    if (window.customPlayer && mount) {
-      if (window.playerWrapper) {
-        mount.appendChild(window.playerWrapper);
-      }
-      window.customPlayer.loadVideo(videoId);
+    if (mount && window.videoPlayer) {
+      mount.innerHTML = '';
+      mount.appendChild(window.videoPlayer.getWrapper());
+      window.videoPlayer.loadVideo(cleanId);
     }
 
     // Set playing video state
-    const instance = "";
-    this.playingVideo = { id: videoId, title: 'Loading...', channel: '', thumb: `${instance}/vi/${videoId}/hqdefault.jpg` };
+    this.playingVideo = {
+      id: cleanId,
+      title: 'Loading...',
+      channel: '',
+      thumb: `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`
+    };
 
-    // Track playback time into Continue Watching progress
-    clearInterval(this.progressInterval);
-    this.progressInterval = setInterval(() => {
-      if (window.customPlayer && window.customPlayer.player && window.customPlayer.player.getCurrentTime) {
-        const curr = window.customPlayer.player.getCurrentTime();
-        const dur = window.customPlayer.player.getDuration();
-        if (curr > 0) {
-          this.store.updateProgress(videoId, curr, dur);
-        }
-      }
-    }, 3000);
-
-    // Fetch video info & related videos
+    // 2. Asynchronously load metadata from Piped without blocking player playback
     try {
-      const { video, instance: apiInstance } = await PawTubeAPI.getVideoInfo(videoId, { signal: this.abortController.signal });
+      const video = await PawTubeAPI.getVideoMetadata(cleanId, { signal: this.abortController.signal });
       this.playingVideo = video;
       this.store.addToHistory(video);
 
       // Render Video Details
-      const isLiked = this.store.isLiked(video.id);
-      const isDisliked = this.store.isDisliked(video.id);
-      const isSaved = this.store.isWatchLater(video.id);
-      const isSubbed = this.store.isSubscribed(video.channelId);
-
-      const detailsEl = document.getElementById('watch-details');
-      if (detailsEl) {
-        detailsEl.innerHTML = `
-          <h1 class="watch-title">${this.escapeHtml(video.title)}</h1>
-          <div class="watch-author-bar">
-            <div class="watch-author-info">
-              <a href="#/channel?id=${encodeURIComponent(video.channelId)}">
-                <img class="watch-author-avatar" src="${video.avatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="${this.escapeHtml(video.channel)}" />
-              </a>
-              <div>
-                <a href="#/channel?id=${encodeURIComponent(video.channelId)}" class="watch-author-name">
-                  ${this.escapeHtml(video.channel)}
-                </a>
-                <div class="watch-author-subs">${this.escapeHtml(video.subCount || '')}</div>
-              </div>
-              <button class="btn-sub ${isSubbed ? 'subscribed' : ''}" id="watch-sub-btn">
-                <span class="material-symbols-rounded" style="font-size:18px;">${isSubbed ? 'check' : 'add'}</span>
-                <span>${isSubbed ? 'Subscribed' : 'Subscribe'}</span>
-              </button>
-            </div>
-
-            <div class="watch-actions-bar">
-              <button class="pill-btn ${isLiked ? 'active' : ''}" id="watch-like-btn">
-                <span class="material-symbols-rounded ${isLiked ? 'filled-icon' : ''}">thumb_up</span>
-                <span>${video.likes > 0 ? formatViews(video.likes) : 'Like'}</span>
-              </button>
-              <button class="pill-btn ${isDisliked ? 'active' : ''}" id="watch-dislike-btn">
-                <span class="material-symbols-rounded">thumb_down</span>
-              </button>
-              <button class="pill-btn ${isSaved ? 'active' : ''}" id="watch-save-btn">
-                <span class="material-symbols-rounded ${isSaved ? 'filled-icon' : ''}">bookmark</span>
-                <span>${isSaved ? 'Saved' : 'Save'}</span>
-              </button>
-              <button class="pill-btn" id="watch-playlist-btn">
-                <span class="material-symbols-rounded">playlist_add</span>
-                <span>Add</span>
-              </button>
-              <button class="pill-btn" id="watch-share-btn">
-                <span class="material-symbols-rounded">share</span>
-                <span>Share</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="watch-description-box" id="watch-description-box">
-            <div class="desc-stats">
-              ${video.viewsFormatted} &bull; ${video.uploadedFormatted}
-            </div>
-            <div class="desc-text" id="desc-text">${this.formatDescription(video.description)}</div>
-            <div class="desc-toggle-btn" id="desc-toggle-btn">Show more</div>
-          </div>
-        `;
-
-        // Event bindings
-        document.getElementById('watch-sub-btn')?.addEventListener('click', () => {
-          const subbed = this.store.toggleSubscription({ id: video.channelId, name: video.channel, avatar: video.avatar });
-          showToast(subbed ? `Subscribed to ${video.channel}` : `Unsubscribed from ${video.channel}`);
-          this.renderWatchPage(videoId);
-        });
-
-        document.getElementById('watch-like-btn')?.addEventListener('click', () => {
-          this.store.toggleLike(video.id);
-          this.renderWatchPage(videoId);
-        });
-
-        document.getElementById('watch-dislike-btn')?.addEventListener('click', () => {
-          this.store.toggleDislike(video.id);
-          this.renderWatchPage(videoId);
-        });
-
-        document.getElementById('watch-save-btn')?.addEventListener('click', () => {
-          const saved = this.store.toggleWatchLater(video);
-          showToast(saved ? 'Saved to Watch Later' : 'Removed from Watch Later');
-          this.renderWatchPage(videoId);
-        });
-
-        document.getElementById('watch-playlist-btn')?.addEventListener('click', () => {
-          this.promptAddToPlaylist(video);
-        });
-
-        document.getElementById('watch-share-btn')?.addEventListener('click', () => {
-          this.shareVideo(video);
-        });
-
-        // Description expand/collapse
-        const descBox = document.getElementById('watch-description-box');
-        const descText = document.getElementById('desc-text');
-        const descToggle = document.getElementById('desc-toggle-btn');
-        if (descBox && descText && descToggle) {
-          descBox.addEventListener('click', () => {
-            const isExp = descText.classList.toggle('expanded');
-            descToggle.textContent = isExp ? 'Show less' : 'Show more';
-          });
-        }
-      }
+      this.renderWatchDetails(video);
 
       // Render Related Videos
       const relatedEl = document.getElementById('related-list');
-      if (relatedEl && video.related) {
+      if (relatedEl && video.related && video.related.length > 0) {
         relatedEl.innerHTML = video.related.map(rel => `
           <div class="related-card" onclick="location.hash='#/watch?v=${rel.id}'">
             <div class="related-thumb-wrap">
@@ -1403,13 +1337,190 @@ class PawTubeApp {
             </div>
           </div>
         `).join('');
+      } else if (relatedEl) {
+        relatedEl.innerHTML = '<div style="font-size:13px; color:var(--text-secondary); padding:16px;">No related videos found.</div>';
       }
 
       // Render Comments
-      this.loadComments(videoId);
+      this.loadComments(cleanId);
     } catch (err) {
-      if (this.abortController.signal.aborted) return;
-      console.error('Watch page error:', err);
+      if (this.abortController.signal?.aborted) return;
+      console.warn('[PawTube] Metadata fetch failed, player is unaffected:', err.message);
+
+      // Fallback details UI: player continues playing!
+      this.renderWatchMetadataFallback(cleanId);
+      window.showToast?.('Video details temporarily unavailable');
+    }
+  }
+
+  renderWatchDetails(video) {
+    const detailsEl = document.getElementById('watch-details');
+    if (!detailsEl) return;
+
+    const isLiked = this.store.isLiked(video.id);
+    const isDisliked = this.store.isDisliked(video.id);
+    const isSaved = this.store.isWatchLater(video.id);
+    const isSubbed = this.store.isSubscribed(video.channelId);
+
+    detailsEl.innerHTML = `
+      <h1 class="watch-title">${this.escapeHtml(video.title)}</h1>
+      <div class="watch-author-bar">
+        <div class="watch-author-info">
+          <a href="#/channel?id=${encodeURIComponent(video.channelId)}">
+            <img class="watch-author-avatar" src="${video.avatar || 'https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png'}" alt="${this.escapeHtml(video.channel)}" />
+          </a>
+          <div>
+            <a href="#/channel?id=${encodeURIComponent(video.channelId)}" class="watch-author-name">
+              ${this.escapeHtml(video.channel)}
+            </a>
+            <div class="watch-author-subs">${this.escapeHtml(video.subCount || '')}</div>
+          </div>
+          <button class="btn-sub ${isSubbed ? 'subscribed' : ''}" id="watch-sub-btn">
+            <span class="material-symbols-rounded" style="font-size:18px;">${isSubbed ? 'check' : 'add'}</span>
+            <span>${isSubbed ? 'Subscribed' : 'Subscribe'}</span>
+          </button>
+        </div>
+
+        <div class="watch-actions-bar">
+          <button class="pill-btn ${isLiked ? 'active' : ''}" id="watch-like-btn">
+            <span class="material-symbols-rounded ${isLiked ? 'filled-icon' : ''}">thumb_up</span>
+            <span>${video.likes > 0 ? formatViews(video.likes) : 'Like'}</span>
+          </button>
+          <button class="pill-btn ${isDisliked ? 'active' : ''}" id="watch-dislike-btn">
+            <span class="material-symbols-rounded ${isDisliked ? 'filled-icon' : ''}">thumb_down</span>
+          </button>
+          <button class="pill-btn ${isSaved ? 'active' : ''}" id="watch-save-btn">
+            <span class="material-symbols-rounded ${isSaved ? 'filled-icon' : ''}">bookmark</span>
+            <span>${isSaved ? 'Saved' : 'Save'}</span>
+          </button>
+          <button class="pill-btn" id="watch-playlist-btn">
+            <span class="material-symbols-rounded">playlist_add</span>
+            <span>Add</span>
+          </button>
+          <button class="pill-btn" id="watch-share-btn">
+            <span class="material-symbols-rounded">share</span>
+            <span>Share</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="watch-description-box" id="watch-description-box">
+        <div class="desc-stats">
+          ${video.viewsFormatted} &bull; ${video.uploadedFormatted}
+        </div>
+        <div class="desc-text" id="desc-text">${this.formatDescription(video.description)}</div>
+        <div class="desc-toggle-btn" id="desc-toggle-btn">Show more</div>
+      </div>
+    `;
+
+    // In-place button interactions (never destroys or resets player iframe!)
+    document.getElementById('watch-sub-btn')?.addEventListener('click', () => {
+      const subbed = this.store.toggleSubscription({ id: video.channelId, name: video.channel, avatar: video.avatar });
+      showToast(subbed ? `Subscribed to ${video.channel}` : `Unsubscribed from ${video.channel}`);
+      const btn = document.getElementById('watch-sub-btn');
+      if (btn) {
+        btn.className = `btn-sub ${subbed ? 'subscribed' : ''}`;
+        btn.innerHTML = `<span class="material-symbols-rounded" style="font-size:18px;">${subbed ? 'check' : 'add'}</span><span>${subbed ? 'Subscribed' : 'Subscribe'}</span>`;
+      }
+    });
+
+    document.getElementById('watch-like-btn')?.addEventListener('click', () => {
+      const liked = this.store.toggleLike(video.id);
+      const btn = document.getElementById('watch-like-btn');
+      if (btn) {
+        btn.classList.toggle('active', liked);
+        const icon = btn.querySelector('.material-symbols-rounded');
+        if (icon) icon.classList.toggle('filled-icon', liked);
+      }
+    });
+
+    document.getElementById('watch-dislike-btn')?.addEventListener('click', () => {
+      const disliked = this.store.toggleDislike(video.id);
+      const btn = document.getElementById('watch-dislike-btn');
+      if (btn) {
+        btn.classList.toggle('active', disliked);
+        const icon = btn.querySelector('.material-symbols-rounded');
+        if (icon) icon.classList.toggle('filled-icon', disliked);
+      }
+    });
+
+    document.getElementById('watch-save-btn')?.addEventListener('click', () => {
+      const saved = this.store.toggleWatchLater(video);
+      showToast(saved ? 'Saved to Watch Later' : 'Removed from Watch Later');
+      const btn = document.getElementById('watch-save-btn');
+      if (btn) {
+        btn.classList.toggle('active', saved);
+        const icon = btn.querySelector('.material-symbols-rounded');
+        if (icon) icon.classList.toggle('filled-icon', saved);
+        const label = btn.querySelector('span:not(.material-symbols-rounded)');
+        if (label) label.textContent = saved ? 'Saved' : 'Save';
+      }
+    });
+
+    document.getElementById('watch-playlist-btn')?.addEventListener('click', () => {
+      this.promptAddToPlaylist(video);
+    });
+
+    document.getElementById('watch-share-btn')?.addEventListener('click', () => {
+      this.shareVideo(video);
+    });
+
+    // Description expand/collapse
+    const descBox = document.getElementById('watch-description-box');
+    const descText = document.getElementById('desc-text');
+    const descToggle = document.getElementById('desc-toggle-btn');
+    if (descBox && descText && descToggle) {
+      descBox.addEventListener('click', () => {
+        const isExp = descText.classList.toggle('expanded');
+        descToggle.textContent = isExp ? 'Show less' : 'Show more';
+      });
+    }
+  }
+
+  renderWatchMetadataFallback(videoId) {
+    const detailsEl = document.getElementById('watch-details');
+    if (!detailsEl) return;
+
+    detailsEl.innerHTML = `
+      <h1 class="watch-title">YouTube Video (${videoId})</h1>
+      <div class="watch-author-bar">
+        <div class="watch-author-info">
+          <div class="watch-author-name">Player Active</div>
+        </div>
+        <div class="watch-actions-bar">
+          <button class="pill-btn" id="watch-share-btn">
+            <span class="material-symbols-rounded">share</span>
+            <span>Share</span>
+          </button>
+        </div>
+      </div>
+      <div class="watch-description-box" style="margin-top:16px;">
+        <div style="font-size:13px; color:var(--text-secondary);">
+          Playback is running smoothly via YouTube no-cookie embed. Video metadata is temporarily unavailable.
+        </div>
+      </div>
+    `;
+
+    document.getElementById('watch-share-btn')?.addEventListener('click', () => {
+      this.shareVideo({ id: videoId, title: 'YouTube Video' });
+    });
+
+    const commentsEl = document.getElementById('watch-comments');
+    if (commentsEl) {
+      commentsEl.innerHTML = `
+        <div style="font-size:13px; color:var(--text-secondary); text-align:center; padding:20px;">
+          Comments are temporarily unavailable.
+        </div>
+      `;
+    }
+
+    const relatedEl = document.getElementById('related-list');
+    if (relatedEl) {
+      relatedEl.innerHTML = `
+        <div style="font-size:13px; color:var(--text-secondary); text-align:center; padding:20px;">
+          Related videos unavailable.
+        </div>
+      `;
     }
   }
 
@@ -1653,17 +1764,21 @@ class PawTubeApp {
   // SEARCH RESULTS
   // ==========================================
   async renderSearchResults(query) {
-    if (!query) {
+    if (!query || !query.trim()) {
       this.renderHomeFeed();
       return;
     }
 
-    this.searchInput.value = query;
+    const cleanQuery = query.trim();
+    this.searchSequence = (this.searchSequence || 0) + 1;
+    const reqSeq = this.searchSequence;
+
+    this.searchInput.value = cleanQuery;
     this.mainContent.innerHTML = `
       <div class="section-header">
         <h1 class="section-title">
           <span class="material-symbols-rounded">search</span>
-          Results for "${this.escapeHtml(query)}"
+          Results for "${this.escapeHtml(cleanQuery)}"
         </h1>
       </div>
       <div class="video-grid" id="search-grid">
@@ -1672,20 +1787,21 @@ class PawTubeApp {
     `;
 
     try {
-      const results = await PawTubeAPI.search(query, { signal: this.abortController.signal });
+      const results = await PawTubeAPI.search(cleanQuery, { signal: this.abortController.signal });
+      if (this.searchSequence !== reqSeq) return; // Stale request protection
       const grid = document.getElementById('search-grid');
       if (grid) {
-        if (results.length === 0) {
+        if (!results || results.length === 0) {
           grid.innerHTML = this.renderEmptyState('No results found', 'Try checking your spelling or using different keywords.');
         } else {
           grid.innerHTML = results.map(v => this.renderVideoCard(v)).join('');
         }
       }
     } catch (err) {
-      if (this.abortController.signal.aborted) return;
+      if (this.abortController.signal?.aborted || this.searchSequence !== reqSeq) return;
       const grid = document.getElementById('search-grid');
       if (grid) {
-        grid.innerHTML = this.renderErrorState('Search failed', err.message, () => this.renderSearchResults(query));
+        grid.innerHTML = this.renderErrorState('Search failed', err.message, () => this.renderSearchResults(cleanQuery));
       }
     }
   }
@@ -1791,16 +1907,17 @@ class PawTubeApp {
   }
 
   shareVideo(video) {
-    const url = `${window.location.origin}${window.location.pathname}#/watch?v=${video.id}`;
+    const cleanId = window.extractVideoId ? window.extractVideoId(video.id) : video.id;
+    const url = `${window.location.origin}/#/watch?v=${cleanId}`;
     if (navigator.share) {
       navigator.share({
-        title: video.title,
-        text: `Watch "${video.title}" on PawTube`,
+        title: video.title || 'PawTube Video',
+        text: `Watch "${video.title || 'video'}" on PawTube`,
         url
       }).catch(() => {});
     } else {
       navigator.clipboard.writeText(url).then(() => {
-        showToast('Link copied to clipboard!');
+        showToast('Canonical link copied to clipboard!');
       });
     }
   }

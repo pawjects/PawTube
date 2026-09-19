@@ -2,15 +2,11 @@ const fetch = global.fetch;
 
 const PIPED_INSTANCES = [
   'https://api.piped.private.coffee',
+  'https://pipedapi.ducks.party',
   'https://pipedapi.kavin.rocks',
-  'https://pipedapi-libre.kavin.rocks',
-  'https://pipedapi.leptons.xyz',
-  'https://pipedapi.nosebs.ru',
-  'https://piped-api.privacy.com.de',
-  'https://pipedapi.adminforge.de',
-  'https://api.piped.yt',
   'https://pipedapi.drgns.space',
-  'https://pipedapi.owo.si'
+  'https://pipedapi.leptons.xyz',
+  'https://pipedapi.adminforge.de'
 ];
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
@@ -112,29 +108,34 @@ class PawTubeBackend {
     return views.toLocaleString() + ' views';
   }
 
+  static extractId(urlOrId) {
+    if (!urlOrId || typeof urlOrId !== 'string') return null;
+    const match = urlOrId.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || urlOrId.match(/(?:watch\/|embed\/|v\/|^)([a-zA-Z0-9_-]{11})(?:[?&#/]|$)/);
+    return match ? match[1] : null;
+  }
+
   static normalizePipedVideo(v) {
     if (!v) return null;
-    const id = v.url ? v.url.replace('/watch?v=', '') : null;
+    const id = PawTubeBackend.extractId(v.url || v.videoId || v.id);
     if (!id) return null;
     return {
       id: id,
-      title: v.title,
-      channel: v.uploaderName,
-      channelId: v.uploaderUrl ? v.uploaderUrl.replace('/channel/', '') : '',
+      title: v.title || 'Untitled Video',
+      channel: v.uploaderName || v.uploader || 'Unknown Channel',
+      channelId: v.uploaderUrl ? v.uploaderUrl.replace(/^\/channel\//, '') : '',
       viewsFormatted: PawTubeBackend.formatViews(v.views),
-      publishedText: v.uploadedDate || '',
+      publishedText: v.uploadedDate || v.uploadDate || '',
       duration: v.duration || 0,
       durationFormatted: PawTubeBackend.formatDuration(v.duration),
-      thumb: v.thumbnail || '',
+      thumb: v.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
       isShort: (v.duration || 0) > 0 && (v.duration || 0) <= 75
     };
   }
 
-  static async fetchWithRetry(endpointPiped, customInstance = null) {
-    // If a custom instance is provided, we just try it directly. If it fails, we fall back to manager.
+  static async fetchWithRetry(endpointPiped, customInstance = null, maxAttempts = 3, timeoutMs = 3500) {
     let triedCustom = false;
     
-    for (let attempts = 0; attempts < 12; attempts++) {
+    for (let attempts = 0; attempts < maxAttempts; attempts++) {
       let instObj;
       let baseUrl;
 
@@ -148,22 +149,27 @@ class PawTubeBackend {
 
       const startTime = Date.now();
       try {
-        const res = await fetchWithTimeout(`${baseUrl}${endpointPiped}`, { headers: { 'Accept': 'application/json' } }, 10000);
+        const res = await fetchWithTimeout(`${baseUrl}${endpointPiped}`, { 
+          headers: { 
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          } 
+        }, timeoutMs);
         
         if (!res.ok) {
-          if (res.status === 429 || res.status >= 500) {
-            throw new Error(`HTTP ${res.status}`); // Retryable
-          }
-          if (res.status === 400 || res.status === 404) {
-             const data = JSON.parse(await res.text());
-             if (data.error) throw new Error(data.error); // Do not retry 400/404, just throw
-          }
           throw new Error(`HTTP ${res.status}`);
         }
         
-        const data = JSON.parse(await res.text());
+        const text = await res.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (_) {
+          throw new Error('Invalid JSON response');
+        }
+
         if (data.error) {
-           throw new Error(data.error);
+          throw new Error(data.error);
         }
 
         if (instObj) instanceManager.markSuccess(baseUrl, Date.now() - startTime);
@@ -171,9 +177,7 @@ class PawTubeBackend {
         return { data, instance: baseUrl, provider: 'piped' };
 
       } catch (e) {
-        // console.error(`${baseUrl} failed: ${e.message}`);
         if (instObj) instanceManager.markFailure(baseUrl);
-        // if custom instance failed, next loop iteration will use manager
       }
     }
     throw new Error("All piped instances failed after retries.");
@@ -203,32 +207,64 @@ class PawTubeBackend {
 
   static async getVideo(id, customInstance = null) {
     const endpointPiped = `/streams/${id}`;
-    const { data, instance, provider } = await PawTubeBackend.fetchWithRetry(endpointPiped, customInstance);
-    
-    const formats = (data.videoStreams || []).concat(data.audioStreams || []);
-    return {
-      instance,
-      provider,
-      video: {
-        id: id,
-        title: data.title,
-        description: data.description,
-        channel: data.uploader,
-        channelId: data.uploaderUrl ? data.uploaderUrl.replace('/channel/', '') : '',
-        viewsFormatted: PawTubeBackend.formatViews(data.views),
-        likeCount: data.likes,
-        thumb: data.thumbnailUrl || '',
-        streams: formats.map(f => ({
-          url: f.url,
-          quality: f.quality || 'unknown',
-          mimeType: f.mimeType,
-          bitrate: f.bitrate,
-          hasAudio: !f.videoOnly,
-          hasVideo: !f.audioOnly
-        })),
-        related: (data.relatedStreams || []).map(PawTubeBackend.normalizePipedVideo).filter(Boolean)
-      }
-    };
+    try {
+      const { data, instance, provider } = await PawTubeBackend.fetchWithRetry(endpointPiped, customInstance);
+      const formats = (data.videoStreams || []).concat(data.audioStreams || []);
+      return {
+        instance,
+        provider,
+        video: {
+          id: id,
+          title: data.title,
+          description: data.description || '',
+          channel: data.uploader,
+          channelId: data.uploaderUrl ? data.uploaderUrl.replace('/channel/', '') : '',
+          viewsFormatted: PawTubeBackend.formatViews(data.views),
+          likeCount: data.likes,
+          thumb: data.thumbnailUrl || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          streams: formats.map(f => ({
+            url: f.url,
+            quality: f.quality || 'unknown',
+            mimeType: f.mimeType,
+            bitrate: f.bitrate,
+            hasAudio: !f.videoOnly,
+            hasVideo: !f.audioOnly
+          })),
+          related: (data.relatedStreams || []).map(PawTubeBackend.normalizePipedVideo).filter(Boolean)
+        }
+      };
+    } catch (pipedErr) {
+      try {
+        const oembedRes = await fetchWithTimeout(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`, {}, 5000);
+        if (oembedRes.ok) {
+          const oe = await oembedRes.json();
+          let related = [];
+          try {
+            const relRes = await PawTubeBackend.search(oe.author_name || oe.title, "all");
+            related = (relRes.items || []).filter(v => v.id !== id).slice(0, 10);
+          } catch (_) {}
+
+          return {
+            instance: 'oembed',
+            provider: 'youtube-oembed',
+            video: {
+              id: id,
+              title: oe.title,
+              description: `Uploaded by ${oe.author_name}`,
+              channel: oe.author_name,
+              channelId: '',
+              viewsFormatted: '',
+              likeCount: 0,
+              thumb: oe.thumbnail_url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+              streams: [],
+              related
+            }
+          };
+        }
+      } catch (_) {}
+
+      throw pipedErr;
+    }
   }
 
   static async getComments(id, customInstance = null) {
@@ -279,38 +315,41 @@ module.exports = async function handler(req, res) {
   
   const [pathPart, queryPart] = endpoint.split('?');
   const query = new URLSearchParams(queryPart || "");
+  const route = (query.get("endpoint") || pathPart.replace(/^\//, '')).toLowerCase();
   const ci = query.get("instance");
 
   try {
-    if (pathPart === '/trending') {
+    if (route === 'trending') {
       return res.status(200).json(await PawTubeBackend.getTrending(query.get("region") || "US", ci));
     } 
-    else if (pathPart === '/search') {
+    else if (route === 'search') {
       return res.status(200).json(await PawTubeBackend.search(query.get("q"), "all", ci));
     }
-    else if (pathPart === '/suggestions') {
+    else if (route === 'suggestions') {
       return res.status(200).json(await PawTubeBackend.getSuggestions(query.get("q"), ci));
     }
-    else if (pathPart === '/video') {
-      return res.status(200).json(await PawTubeBackend.getVideo(query.get("id"), ci));
+    else if (route === 'video') {
+      const vidId = PawTubeBackend.extractId(query.get("id") || query.get("v"));
+      return res.status(200).json(await PawTubeBackend.getVideo(vidId, ci));
     }
-    else if (pathPart === '/comments') {
-      return res.status(200).json(await PawTubeBackend.getComments(query.get("id"), ci));
+    else if (route === 'comments') {
+      const vidId = PawTubeBackend.extractId(query.get("id") || query.get("v"));
+      return res.status(200).json(await PawTubeBackend.getComments(vidId, ci));
     }
-    else if (pathPart === '/channel') {
+    else if (route === 'channel') {
       return res.status(200).json(await PawTubeBackend.getChannel(query.get("id"), ci));
     }
-    else if (pathPart === '/channel-videos') {
+    else if (route === 'channel-videos') {
       return res.status(200).json(await PawTubeBackend.getChannelVideos(query.get("id"), ci));
     }
-    else if (pathPart === '/playlist') {
+    else if (route === 'playlist') {
       return res.status(200).json(await PawTubeBackend.getPlaylist(query.get("id"), ci));
     }
-    else if (pathPart === '/instances') {
+    else if (route === 'instances') {
       return res.status(200).json(instanceManager.instances);
     }
     else {
-      return res.status(404).json({ error: "Not found" });
+      return res.status(404).json({ error: "Not found", path: pathPart, route });
     }
   } catch (err) {
     console.error("API Error:", err.message);

@@ -5,7 +5,7 @@ const unifiedHandler = require('./api/unified');
 const app = express();
 const PORT = 3000;
 
-app.get('/api/unified/*', async (req, res) => {
+app.all(['/api/unified', '/api/unified/*'], async (req, res) => {
   await unifiedHandler(req, res);
 });
 
