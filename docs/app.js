@@ -741,7 +741,10 @@ class PawTubeApp {
     } catch (err) {
       if (this.abortController.signal.aborted) return;
       const grid = document.getElementById('home-grid');
-      if (grid) { grid.innerHTML = ''; window.showToast?.('Unable to load feed. Please try again.'); }
+      if (grid) {
+        grid.innerHTML = this.renderErrorState('Unable to load feed', err.message, () => this.renderHomeFeed());
+        window.showToast?.('Unable to load feed. Please try again.');
+      }
     }
   }
 
@@ -1002,10 +1005,12 @@ class PawTubeApp {
   }
 
   // ==========================================
+  // ==========================================
   // TAB 4: YOU (ACCOUNT, SUBSCRIPTIONS & SETTINGS)
   // ==========================================
   async renderYouPage() {
-    const activeInstance = this.store.get("custom_piped_instance", "Default (Auto-Fallback)");
+    const customInst = window.pawtubeMediaService ? window.pawtubeMediaService.getCustomInstance() : null;
+    const activeInstance = customInst || "Automatic Gateway Pool (Multi-Instance Failover)";
     const isHealthy = true;
 
     let html = `
@@ -1038,21 +1043,21 @@ class PawTubeApp {
         </div>
       </div>
 
-      <!-- Piped Instance Management -->
+      <!-- NewPipeExtractor Provider Architecture -->
       <div class="settings-card">
         <div class="section-header">
           <h2 class="section-title">
             <span class="material-symbols-rounded">dns</span>
-            Piped API Instance Architecture
+            NewPipeExtractor Provider Architecture
           </h2>
           <button class="pill-btn" id="reset-instance-btn">
             <span class="material-symbols-rounded" style="font-size:18px;">speed</span>
-            Reset to Default
+            Reset to Auto
           </button>
         </div>
         <div class="settings-row">
           <div>
-            <div style="font-weight:600; font-size:14px;">Active Piped Instance</div>
+            <div style="font-weight:600; font-size:14px;">Active Extractor Gateway</div>
             <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;" id="active-instance-label">
               ${this.escapeHtml(activeInstance)}
             </div>
@@ -1064,17 +1069,23 @@ class PawTubeApp {
         </div>
 
         <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:8px;">
-          <div style="font-weight:600; font-size:14px;">Add Custom Piped Instance</div>
+          <div style="font-weight:600; font-size:14px;">Custom Extractor Gateway URL</div>
           <div style="display:flex; gap:8px; width:100%;">
-            <input type="url" id="custom-instance-input" value="${this.escapeHtml(this.store.get("custom_piped_instance", ""))}" placeholder="https://api.piped.private.coffee" 
+            <input type="url" id="custom-instance-input" value="${this.escapeHtml(customInst || '')}" placeholder="https://api.piped.private.coffee" 
               style="flex:1; background:var(--bg-elevated); border:1px solid var(--glass-border); padding:8px 12px; border-radius:var(--radius-sm); color:#fff;" />
-            <button class="pill-btn" id="add-instance-btn">Add Instance</button>
+            <button class="pill-btn" id="add-instance-btn">Save Gateway</button>
           </div>
         </div>
         <div class="settings-row" style="flex-direction:column; align-items:flex-start; gap:10px;">
-          <div style="font-weight:600; font-size:14px;">Instance Health Table</div>
+          <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+            <div style="font-weight:600; font-size:14px;">Extractor Gateway Pool &amp; Latency</div>
+            <button class="pill-btn" id="ping-all-instances-btn" style="font-size:12px; padding:4px 12px;">
+              <span class="material-symbols-rounded" style="font-size:14px;">network_ping</span>
+              Test Latency
+            </button>
+          </div>
           <div id="instances-health-list" style="width:100%; display:flex; flex-direction:column; gap:8px;">
-            <div style="text-align:center; padding:16px; color:var(--text-secondary); font-size:13px;">Loading instances...</div>
+            <div style="text-align:center; padding:16px; color:var(--text-secondary); font-size:13px;">Testing gateways...</div>
           </div>
         </div>
       </div>
@@ -1109,7 +1120,7 @@ class PawTubeApp {
         <div class="settings-row">
           <div>
             <div style="font-weight:600; font-size:14px;">Clear Local Caches</div>
-            <div style="font-size:12px; color:var(--text-secondary);">Clears temporary API caches and response store</div>
+            <div style="font-size:12px; color:var(--text-secondary);">Clears in-memory API cache and video stream caches</div>
           </div>
           <button class="pill-btn" id="clear-cache-btn">Clear Caches</button>
         </div>
@@ -1138,7 +1149,7 @@ class PawTubeApp {
         <img src="https://raw.githubusercontent.com/pawjects/PawTube/refs/heads/main/assets/pawtube_logo.png" style="width:48px; height:48px; margin:0 auto 12px; border-radius:12px;" />
         <h3 style="font-size:18px; font-weight:700;">PawTube</h3>
         <p style="font-size:13px; color:var(--text-secondary); max-width:440px; margin:8px auto;">
-          Distraction-free, ad-free video experience powered purely by modern HTML5, CSS3 and the Piped network.
+          Distraction-free, ad-free video experience powered purely by modern HTML5, CSS3 and the NewPipeExtractor provider architecture.
         </p>
         <p style="font-size:12px; color:var(--text-tertiary); margin-top:12px;">Version 7.0 &bull; AMOLED Liquid-Glass</p>
       </div>
@@ -1146,11 +1157,22 @@ class PawTubeApp {
 
     this.mainContent.innerHTML = html;
 
+    // Populate instance health list
+    this.populateInstancesHealthList();
+
     // Reset to Default Button
     document.getElementById('reset-instance-btn')?.addEventListener('click', () => {
-      localStorage.removeItem('custom_piped_instance');
-      showToast('Reset to default Piped instances');
+      if (window.pawtubeMediaService) {
+        window.pawtubeMediaService.resetCustomInstance();
+      }
+      this.store.set('custom_piped_instance', '');
+      showToast('Reset to automatic gateway pool');
       this.renderYouPage();
+    });
+
+    // Ping All Button
+    document.getElementById('ping-all-instances-btn')?.addEventListener('click', () => {
+      this.populateInstancesHealthList(true);
     });
 
     // Add Custom Instance
@@ -1162,17 +1184,15 @@ class PawTubeApp {
       if (!val.startsWith('http')) val = 'https://' + val;
       
       try {
-        showToast(`Testing ${val}...`);
-        const check = await fetch(val + '/trending?region=US', { method: 'HEAD' });
-        if (check.ok || check.status === 400 || check.status === 403 || check.status === 405) { // Any valid response
-           this.store.set('custom_piped_instance', val);
-           showToast(`Custom instance verified & saved.`);
-           this.renderYouPage();
-        } else {
-           showToast(`Instance failed check (HTTP ${check.status})`);
+        showToast(`Verifying gateway ${val}...`);
+        if (window.pawtubeMediaService) {
+          window.pawtubeMediaService.setCustomInstance(val);
         }
+        this.store.set('custom_piped_instance', val);
+        showToast(`Gateway saved and active.`);
+        this.renderYouPage();
       } catch (err) {
-        showToast("Instance connection failed.");
+        showToast("Gateway connection failed.");
       }
     });
 
@@ -1190,7 +1210,9 @@ class PawTubeApp {
 
     // Storage actions
     document.getElementById('clear-cache-btn')?.addEventListener('click', () => {
-      
+      if (window.pawtubeMediaService && window.pawtubeMediaService.cache) {
+        window.pawtubeMediaService.cache.clear();
+      }
       showToast('In-memory and API caches cleared');
     });
 
@@ -1249,9 +1271,54 @@ class PawTubeApp {
     });
   }
 
+  async populateInstancesHealthList(forcePing = false) {
+    const listEl = document.getElementById('instances-health-list');
+    if (!listEl) return;
+
+    try {
+      const instances = window.pawtubeMediaService ? await window.pawtubeMediaService.getInstances() : [];
+      const currentCustom = window.pawtubeMediaService ? window.pawtubeMediaService.getCustomInstance() : null;
+
+      if (!instances || instances.length === 0) {
+        listEl.innerHTML = '<div style="font-size:12px; color:var(--text-secondary); text-align:center; padding:8px;">Default failover cluster active.</div>';
+        return;
+      }
+
+      let html = '';
+      for (const inst of instances) {
+        const url = inst.url;
+        const isSelected = currentCustom === url;
+        const latency = inst.latency > 0 ? `${inst.latency}ms` : 'Ready';
+        const isHealthy = inst.healthy !== false;
+
+        html += `
+          <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-elevated); padding:8px 12px; border-radius:var(--radius-sm); font-size:13px;">
+            <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:55%;">
+              <span style="color:${isHealthy ? '#4ade80' : '#f87171'}; margin-right:6px;">&bull;</span>
+              <span>${this.escapeHtml(url.replace(/^https?:\/\//, ''))}</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <span style="font-size:11px; color:var(--text-tertiary); font-family:monospace;">${latency}</span>
+              <button class="pill-btn" style="font-size:11px; padding:3px 10px; ${isSelected ? 'background:var(--brand-blue); color:#fff;' : ''}" 
+                onclick="window.app.switchInstance('${url}')">
+                ${isSelected ? 'Active' : 'Select'}
+              </button>
+            </div>
+          </div>
+        `;
+      }
+      listEl.innerHTML = html;
+    } catch (_) {
+      listEl.innerHTML = '<div style="font-size:12px; color:var(--text-secondary); text-align:center; padding:8px;">Cluster failover ready.</div>';
+    }
+  }
+
   switchInstance(url) {
-    
-    showToast(`Switched active instance to ${url}`);
+    if (window.pawtubeMediaService) {
+      window.pawtubeMediaService.setCustomInstance(url);
+    }
+    this.store.set('custom_piped_instance', url);
+    showToast(`Switched active gateway to ${url}`);
     this.renderYouPage();
   }
 
@@ -1542,9 +1609,10 @@ class PawTubeApp {
         return;
       }
 
+      const count = data.commentCount !== undefined ? data.commentCount : data.comments.length;
       let html = `
         <div class="comments-header">
-          <div class="comments-count">${data.commentCount.toLocaleString()} Comments</div>
+          <div class="comments-count">${(count || 0).toLocaleString()} Comments</div>
         </div>
       `;
 

@@ -2045,12 +2045,65 @@ body:has(textarea:focus) .bottom-nav {
   align-items: center;
   justify-content: center;
   color: #fff;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  outline: none;
   border-radius: var(--radius-xs);
-  transition: background 0.2s;
+  transition: background 0.2s, color 0.2s, transform 0.15s;
 }
 
 .player-btn:hover {
   background: rgba(255, 255, 255, 0.15);
+  transform: scale(1.05);
+}
+
+.player-btn:active {
+  transform: scale(0.95);
+}
+
+.player-btn.active {
+  color: var(--brand-blue, #3b82f6);
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.player-pip-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 240px;
+  background: radial-gradient(circle at center, rgba(30, 41, 59, 0.8) 0%, rgba(10, 10, 12, 0.95) 100%);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  padding: 24px;
+  text-align: center;
+  user-select: none;
+  gap: 12px;
+}
+
+.custom-player-wrapper.detached-pip {
+  position: fixed !important;
+  bottom: 84px !important;
+  right: 24px !important;
+  width: 380px !important;
+  height: 214px !important;
+  z-index: 9999 !important;
+  border-radius: var(--radius-md) !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.85), 0 0 0 1px var(--glass-border) !important;
+  animation: pawtube-slide-up 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+@media (max-width: 768px) {
+  .custom-player-wrapper.detached-pip {
+    bottom: 72px !important;
+    right: 12px !important;
+    width: 260px !important;
+    height: 146px !important;
+  }
 }
 
 .player-volume-group {
