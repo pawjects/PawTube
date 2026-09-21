@@ -1,6 +1,6 @@
 {
   "name": "PawTube",
-  "description": "A clean, distraction-free video experience powered by NewPipeExtractor and YouTube no-cookie embed with AMOLED liquid-glass UI",
+  "description": "A clean, distraction-free video experience powered by Piped API and YouTube no-cookie embed with AMOLED liquid-glass UI",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

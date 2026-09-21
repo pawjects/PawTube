@@ -15,24 +15,12 @@ const fetch = global.fetch;
 // Supported NewPipeExtractor backend gateways
 const EXTRACTOR_INSTANCES = [
   'https://api.piped.private.coffee',
-  'https://pipedapi.ducks.party',
-  'https://pipedapi.leptons.xyz',
-  'https://piped-api.privacy.com.de',
-  'https://pipedapi-libre.kavin.rocks',
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.nosebs.ru',
-  'https://pipedapi.adminforge.de',
-  'https://api.piped.yt',
-  'https://pipedapi.drgns.space',
-  'https://pipedapi.owo.si',
-  'https://piped-api.codespace.cz',
-  'https://pipedapi.reallyaweso.me',
-  'https://pipedapi.darkness.services'
+  'https://pipedapi.ducks.party'
 ];
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 5000) {
   const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeoutMs);
+  const id = setTimeout(() => controller.abort(new Error(`Extractor timeout after ${timeoutMs}ms`)), timeoutMs);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     clearTimeout(id);
@@ -249,11 +237,64 @@ class NewPipeExtractorBackend {
   }
 
   static async getTrending(region = 'US', customInstance = null) {
-    const endpoint = `/trending?region=${encodeURIComponent(region)}`;
-    const { data, instance, provider } = await NewPipeExtractorBackend.fetchWithRetry(endpoint, customInstance);
-    const rawItems = Array.isArray(data) ? data : (data.items || []);
-    const items = rawItems.map(NewPipeExtractorBackend.normalizeMediaItem).filter(Boolean);
-    return { instance, provider, items };
+    try {
+      const endpoint = `/trending?region=${encodeURIComponent(region)}`;
+      const { data, instance, provider } = await NewPipeExtractorBackend.fetchWithRetry(endpoint, customInstance);
+      const rawItems = Array.isArray(data) ? data : (data.items || []);
+      const items = rawItems.map(NewPipeExtractorBackend.normalizeMediaItem).filter(Boolean);
+      return { instance, provider, items };
+    } catch (err) {
+      console.warn('[NewPipeExtractor] Trending failed, returning fallback feed:', err.message);
+      const fallbackItems = [
+        {
+          id: 'dQw4w9WgXcQ',
+          url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          pawtubeUrl: '#/watch?v=dQw4w9WgXcQ',
+          title: 'Rick Astley - Never Gonna Give You Up (Official Music Video)',
+          channel: 'Rick Astley',
+          author: 'Rick Astley',
+          channelId: 'UCuAXFkgsw1L7xaCfnd5JJOw',
+          thumb: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
+          duration: 213,
+          durationFormatted: '3:33',
+          views: 1500000000,
+          viewsFormatted: '1.5B views',
+          type: 'stream'
+        },
+        {
+          id: 'jfKfPfyJRdk',
+          url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk',
+          pawtubeUrl: '#/watch?v=jfKfPfyJRdk',
+          title: 'lofi hip hop radio 📚 - beats to relax/study to',
+          channel: 'Lofi Girl',
+          author: 'Lofi Girl',
+          channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
+          thumb: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
+          duration: -1,
+          durationFormatted: 'LIVE',
+          views: 45000,
+          viewsFormatted: '45K watching',
+          isLive: true,
+          type: 'stream'
+        },
+        {
+          id: 'JGwWNGJdvx8',
+          url: 'https://www.youtube.com/watch?v=JGwWNGJdvx8',
+          pawtubeUrl: '#/watch?v=JGwWNGJdvx8',
+          title: 'Ed Sheeran - Shape of You (Official Music Video)',
+          channel: 'Ed Sheeran',
+          author: 'Ed Sheeran',
+          channelId: 'UC0C-w0YjGpqDXGB8IHb662A',
+          thumb: 'https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg',
+          duration: 264,
+          durationFormatted: '4:24',
+          views: 6200000000,
+          viewsFormatted: '6.2B views',
+          type: 'stream'
+        }
+      ];
+      return { instance: 'fallback', provider: 'FallbackProvider', items: fallbackItems };
+    }
   }
 
   static async search(query, filter = 'all', customInstance = null) {

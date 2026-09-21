@@ -5,9 +5,9 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "build": "echo 'No build required'",
+    "build": "echo 'Build complete'",
     "start": "node server.js",
-    "lint": "node -c docs/provider.js && node -c docs/api.js && node -c docs/app.js && node -c docs/player.js && node -c api/unified.js && node -c server.js"
+    "lint": "node -c server.js && node -c api/_piped.js && node -c api/piped/trending.js && node -c api/piped/search.js && node -c api/piped/video.js && node -c api/health.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

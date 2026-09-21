@@ -1,0 +1,77 @@
+/**
+ * PawTube - Video Card Component
+ */
+
+import { escapeHtml } from '../../utils/dom.js';
+
+export function renderVideoCard(v) {
+  if (!v || !v.id) return '';
+  const thumbUrl = v.thumb || v.thumbnail || (v.id ? `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg` : '');
+  const channelName = v.channel || v.author || 'Unknown Channel';
+  const channelId = v.channelId || v.authorId || '';
+
+  return `
+    <div class="video-card" data-video-id="${escapeHtml(v.id)}" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
+      <div class="thumbnail-wrap">
+        <img src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(v.title)}" loading="lazy" onerror="this.onerror=null;if('${escapeHtml(v.id)}')this.src='https://i.ytimg.com/vi/${escapeHtml(v.id)}/hqdefault.jpg';" />
+        <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
+      </div>
+      <div class="card-info">
+        ${v.avatar ? `
+          <img class="card-avatar" src="${escapeHtml(v.avatar)}" alt="" loading="lazy" 
+            onclick="event.stopPropagation(); if ('${escapeHtml(channelId)}') window.location.hash='#/channel?id=${encodeURIComponent(channelId)}';" onerror="this.style.display='none';" />
+        ` : ''}
+        <div class="card-meta">
+          <div class="card-title">${escapeHtml(v.title)}</div>
+          <div class="card-channel" onclick="event.stopPropagation(); if ('${escapeHtml(channelId)}') window.location.hash='#/channel?id=${encodeURIComponent(channelId)}';">
+            ${escapeHtml(channelName)}
+          </div>
+          <div class="card-stats">
+            <span>${escapeHtml(v.viewsFormatted || '')}</span>
+            ${v.uploadedFormatted ? `<span>&bull;</span><span>${escapeHtml(v.uploadedFormatted)}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+export function renderSkeletonCards(count = 8) {
+  return Array.from({ length: count }).map(() => `
+    <div class="video-card skeleton-card">
+      <div class="skel-thumb skeleton-pulse" style="aspect-ratio:16/9;border-radius:12px;background:rgba(255,255,255,0.06);"></div>
+      <div class="card-info" style="margin-top:10px;display:flex;gap:12px;">
+        <div class="skel-avatar skeleton-pulse" style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);flex-shrink:0;"></div>
+        <div style="flex:1;">
+          <div class="skel-title skeleton-pulse" style="height:16px;border-radius:4px;background:rgba(255,255,255,0.06);margin-bottom:8px;width:90%;"></div>
+          <div class="skel-text skeleton-pulse" style="height:12px;border-radius:4px;background:rgba(255,255,255,0.04);margin-bottom:6px;width:60%;"></div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+export function renderEmptyState(title, subtitle) {
+  return `
+    <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary);">
+      <span class="material-symbols-rounded" style="font-size: 48px; color: var(--text-tertiary); margin-bottom: 12px;">search_off</span>
+      <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">${escapeHtml(title)}</h3>
+      <p style="font-size: 13.5px; max-width: 400px; margin: 0 auto;">${escapeHtml(subtitle)}</p>
+    </div>
+  `;
+}
+
+export function renderErrorState(title, message, retryCallbackName) {
+  return `
+    <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary);">
+      <span class="material-symbols-rounded" style="font-size: 48px; color: var(--brand-red); margin-bottom: 12px;">error_outline</span>
+      <h3 style="font-size: 18px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">${escapeHtml(title)}</h3>
+      <p style="font-size: 13.5px; max-width: 440px; margin: 0 auto 16px;">${escapeHtml(message)}</p>
+      ${retryCallbackName ? `
+        <button class="liquid-btn" onclick="${escapeHtml(retryCallbackName)}()" style="padding:8px 20px;border-radius:999px;background:var(--bg-elevated);border:1px solid var(--glass-border);color:var(--text-primary);font-size:14px;cursor:pointer;">
+          Retry
+        </button>
+      ` : ''}
+    </div>
+  `;
+}

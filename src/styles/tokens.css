@@ -1,0 +1,65 @@
+/* ==========================================================================
+   PawTube - Liquid-Glass AMOLED UI Tokens
+   ========================================================================== */
+
+:root {
+  /* AMOLED Base Colors */
+  --bg-primary: #000000;
+  --bg-secondary: #080808;
+  --bg-surface: #101010;
+  --bg-elevated: rgba(255, 255, 255, 0.04);
+  --bg-hover: rgba(255, 255, 255, 0.08);
+  --bg-active: rgba(255, 255, 255, 0.12);
+  
+  /* Liquid-Glass Surfaces */
+  --glass-bg: linear-gradient(135deg, rgba(20, 20, 20, 0.75) 0%, rgba(10, 10, 10, 0.65) 100%);
+  --glass-header: linear-gradient(135deg, rgba(14, 14, 14, 0.85) 0%, rgba(6, 6, 6, 0.7) 100%);
+  --glass-bnav: linear-gradient(135deg, rgba(22, 22, 22, 0.8) 0%, rgba(12, 12, 12, 0.65) 100%);
+  --glass-surface: linear-gradient(135deg, rgba(32, 32, 32, 0.7) 0%, rgba(16, 16, 16, 0.55) 100%);
+  --glass-card: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+  --glass-border: rgba(255, 255, 255, 0.2);
+  --glass-border-light: rgba(255, 255, 255, 0.1);
+  --glass-border-focus: rgba(62, 166, 255, 0.5);
+  
+  /* High-legibility Typography */
+  --text-primary: #fcfcfc;
+  --text-secondary: #9e9e9e;
+  --text-tertiary: #686868;
+  --text-disabled: #444444;
+  
+  /* PawTube Brand Accents */
+  --brand-color: #3ea6ff;
+  --brand-blue: #3ea6ff;
+  --brand-red: #ff334b;
+  --brand-green: #00e676;
+  --brand-amber: #ffb300;
+  --error: #ff453a;
+  
+  /* Blur & Depth */
+  --blur-sm: blur(8px);
+  --blur-md: blur(16px);
+  --blur-lg: blur(28px);
+  --shadow-glass: 0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+  
+  /* Dimensions & Geometry */
+  --header-height: 64px;
+  --sidebar-width: 240px;
+  --mini-sidebar-width: 72px;
+  --bottom-nav-height: 60px;
+  
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+  
+  --font-base: 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-heading: 'Google Sans', 'Roboto', sans-serif;
+  
+  /* Safe Area Insets */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
