@@ -16,8 +16,18 @@ const fetch = global.fetch;
 const EXTRACTOR_INSTANCES = [
   'https://api.piped.private.coffee',
   'https://pipedapi.ducks.party',
-  'https://pipedapi.in.projectsegfau.lt',
-  'https://api.piped.projectsegfau.lt'
+  'https://pipedapi.leptons.xyz',
+  'https://piped-api.privacy.com.de',
+  'https://pipedapi-libre.kavin.rocks',
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.nosebs.ru',
+  'https://pipedapi.adminforge.de',
+  'https://api.piped.yt',
+  'https://pipedapi.drgns.space',
+  'https://pipedapi.owo.si',
+  'https://piped-api.codespace.cz',
+  'https://pipedapi.reallyaweso.me',
+  'https://pipedapi.darkness.services'
 ];
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = 7000) {

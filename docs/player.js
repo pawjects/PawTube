@@ -80,28 +80,44 @@
 
   /**
    * Canonical YouTube No-Cookie Embed URL Builder
-   * Constructs the safe, tracker-free embed player URL for a given video ID.
-   * Format: https://www.youtube-nocookie.com/embed/{videoId}?autoplay=1&playsinline=1&controls=1&rel=0&modestbranding=1&enablejsapi=1
+   * Requirement 16: The primary PawTube player MUST be https://www.youtube-nocookie.com/embed/{VIDEO_ID}
+   * For dQw4w9WgXcQ it must produce https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ
    */
-  function buildEmbedUrl(videoId, options = {}) {
+  function buildNoCookieEmbedUrl(videoId, options = null) {
     const cleanId = extractVideoId(videoId);
     if (!cleanId) return null;
 
-    const params = new URLSearchParams({
-      autoplay: options.autoplay !== undefined ? (options.autoplay ? '1' : '0') : '1',
-      playsinline: '1',
-      controls: options.controls !== undefined ? (options.controls ? '1' : '0') : '1',
-      rel: '0',
-      modestbranding: '1',
-      enablejsapi: '1'
-    });
+    const base = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cleanId)}`;
+    if (!options || Object.keys(options).length === 0) {
+      return base;
+    }
+
+    const params = new URLSearchParams();
+    if (options.autoplay !== undefined) {
+      params.set('autoplay', options.autoplay ? '1' : '0');
+    }
+    if (options.playsinline !== false) {
+      params.set('playsinline', '1');
+    }
+    if (options.controls !== undefined) {
+      params.set('controls', options.controls ? '1' : '0');
+    }
+    params.set('rel', '0');
+    params.set('modestbranding', '1');
+    if (options.enablejsapi !== false) {
+      params.set('enablejsapi', '1');
+    }
 
     if (options.start && Number.isFinite(options.start) && options.start > 0) {
       params.set('start', String(Math.floor(options.start)));
     }
 
-    return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(cleanId)}?${params.toString()}`;
+    const qs = params.toString();
+    return qs ? `${base}?${qs}` : base;
   }
+
+  // Alias for backwards compatibility
+  const buildEmbedUrl = buildNoCookieEmbedUrl;
 
   /**
    * Canonical VideoPlayer implementation
@@ -961,7 +977,8 @@
 
   // Export canonical utilities and instance to window
   window.extractVideoId = extractVideoId;
-  window.buildEmbedUrl = buildEmbedUrl;
+  window.buildNoCookieEmbedUrl = buildNoCookieEmbedUrl;
+  window.buildEmbedUrl = buildNoCookieEmbedUrl;
   window.VideoPlayer = VideoPlayer;
 
   // Single canonical player instance

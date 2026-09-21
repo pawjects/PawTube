@@ -293,39 +293,9 @@ class PawTubeApp {
   }
 
   initURLObserver() {
-    // Listen for hash changes (SPA routing)
+    // Listen for hash changes (SPA routing) and browser popstate (back/forward)
     window.addEventListener('hashchange', () => this.handleRoute());
-
-    // Intercept standard pathname or query parameters on initial boot
-    const pathname = window.location.pathname || '';
-    const search = window.location.search || '';
-
-    // Direct /watch or /watch/ID or /watch?v=ID
-    if (pathname.startsWith('/watch')) {
-      const extracted = window.extractVideoId ? window.extractVideoId(pathname + search) : null;
-      if (extracted) {
-        window.location.replace(`/#/watch?v=${extracted}`);
-        return;
-      }
-    }
-
-    // Intercept query parameters (e.g., ?v=ID, ?channel=ID, ?list=ID)
-    if (search) {
-      const searchParams = new URLSearchParams(search);
-      if (searchParams.has('v')) {
-        const extracted = window.extractVideoId ? window.extractVideoId(searchParams.get('v')) : searchParams.get('v');
-        if (extracted) {
-          window.location.replace(`/#/watch?v=${extracted}`);
-          return;
-        }
-      } else if (searchParams.has('channel')) {
-        window.location.replace(`/#/channel?id=${encodeURIComponent(searchParams.get('channel'))}`);
-        return;
-      } else if (searchParams.has('list')) {
-        window.location.replace(`/#/playlist?id=${encodeURIComponent(searchParams.get('list'))}`);
-        return;
-      }
-    }
+    window.addEventListener('popstate', () => this.handleRoute());
   }
 
   initEventListeners() {
@@ -527,31 +497,49 @@ class PawTubeApp {
     }
     this.abortController = new AbortController();
 
-    const hash = window.location.hash || '#/home';
-    const [rawPath, queryString] = hash.slice(1).split('?');
+    const pathname = window.location.pathname || '';
+    const search = window.location.search || '';
+    const hash = window.location.hash || '';
+
+    // Direct video playback detection from pathname, search parameters, or hash
+    // Strictly satisfies Requirement 21: zero API requests required before player creation
+    let directVideoId = null;
+    if (pathname.startsWith('/watch') || search.includes('v=') || hash.includes('/watch')) {
+      directVideoId = window.extractVideoId ? window.extractVideoId(pathname + search + hash) : null;
+    }
+
+    if (directVideoId) {
+      this.currentRoute = '/watch';
+      this.currentParams = { v: directVideoId };
+      this.updateNavigationUI('/watch');
+      this.hideMiniPlayer();
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      const targetHash = `#/watch?v=${directVideoId}`;
+      if (window.location.hash !== targetHash) {
+        window.history.replaceState(null, '', targetHash);
+      }
+      this.renderWatchPage(directVideoId);
+      return;
+    }
+
+    // Direct channel query support from search (e.g. ?channel=ID)
+    if (search.includes('channel=')) {
+      const sp = new URLSearchParams(search);
+      const chId = sp.get('channel');
+      if (chId) {
+        window.history.replaceState(null, '', `#/channel?id=${encodeURIComponent(chId)}`);
+        this.renderChannelPage(chId);
+        return;
+      }
+    }
+
+    const [rawPath, queryString] = (hash.startsWith('#') ? hash.slice(1) : hash).split('?');
     const params = new URLSearchParams(queryString || '');
 
     // Normalize path (ensure leading slash)
     let path = rawPath || '/home';
     if (!path.startsWith('/')) {
       path = '/' + path;
-    }
-
-    // Support both /watch?v=VIDEO_ID and /watch/VIDEO_ID
-    if (path.startsWith('/watch')) {
-      let candidateId = params.get('v');
-      if (!candidateId && path.startsWith('/watch/')) {
-        candidateId = path.replace(/^\/watch\//, '');
-      }
-      const videoId = window.extractVideoId ? window.extractVideoId(candidateId || hash) : candidateId;
-
-      this.currentRoute = '/watch';
-      this.currentParams = { v: videoId };
-      this.updateNavigationUI('/watch');
-      this.hideMiniPlayer();
-      window.scrollTo({ top: 0, behavior: 'instant' });
-      this.renderWatchPage(videoId);
-      return;
     }
 
     this.currentRoute = path;
@@ -652,10 +640,44 @@ class PawTubeApp {
     listEl.innerHTML = html;
   }
 
+  getCachedFeed(category) {
+    try {
+      const raw = localStorage.getItem(`pawtube_feed_cache_${category || 'All'}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.items) && parsed.items.length > 0) {
+          // Allow cached feed up to 30 minutes
+          if (Date.now() - (parsed.timestamp || 0) < 1800000) {
+            return parsed.items;
+          }
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  setCachedFeed(category, items) {
+    try {
+      if (Array.isArray(items) && items.length > 0) {
+        localStorage.setItem(`pawtube_feed_cache_${category || 'All'}`, JSON.stringify({
+          timestamp: Date.now(),
+          items: items.slice(0, 40)
+        }));
+      }
+    } catch (e) {}
+  }
+
   // ==========================================
   // TAB 1: HOME FEED (PERSONALIZED DISCOVERY)
   // ==========================================
   async renderHomeFeed() {
+    // Abort previous in-flight feed requests to prevent race conditions or stale updates
+    if (this.feedAbortController) {
+      this.feedAbortController.abort();
+    }
+    this.feedAbortController = new AbortController();
+    const feedSignal = this.feedAbortController.signal;
+
     // 1. Render Category Bar and Continue Watching skeleton immediately
     const continueWatching = this.store.getContinueWatching();
     let html = `
@@ -694,16 +716,17 @@ class PawTubeApp {
       `;
     }
 
+    const cachedVideos = this.getCachedFeed(this.activeCategory);
+
     html += `
       <div class="section-header">
         <h2 class="section-title">
           <span class="material-symbols-rounded">${this.activeCategory === 'All' ? 'auto_awesome' : 'local_fire_department'}</span>
           ${this.activeCategory === 'All' ? 'Recommended for You' : this.activeCategory}
         </h2>
-        
       </div>
       <div class="video-grid" id="home-grid">
-        ${this.renderSkeletonCards(8)}
+        ${cachedVideos && cachedVideos.length > 0 ? cachedVideos.map(v => this.renderVideoCard(v)).join('') : this.renderSkeletonCards(8)}
       </div>
     `;
 
@@ -717,33 +740,74 @@ class PawTubeApp {
       });
     });
 
-    
-
-    // Fetch feed data with fallback and personalization ranking
+    // Fetch live feed data with fallback and personalization ranking
     try {
-      let videos = [];
+      let rawVideos = [];
       if (this.activeCategory === 'All' || this.activeCategory === 'Trending') {
-        videos = await PawTubeAPI.getTrending({ signal: this.abortController.signal });
+        rawVideos = await PawTubeAPI.getTrending({ region: 'US', signal: feedSignal });
       } else {
-        videos = await PawTubeAPI.getCategoryFeed(this.activeCategory, { signal: this.abortController.signal });
+        rawVideos = await PawTubeAPI.getCategoryFeed(this.activeCategory, { signal: feedSignal });
       }
 
+      const itemsList = Array.isArray(rawVideos)
+        ? rawVideos
+        : (rawVideos && Array.isArray(rawVideos.items) ? rawVideos.items : []);
+
+      // Validate each item individually (extract clean 11-char ID from id, videoId, or url)
+      const validVideos = itemsList.map(item => {
+        if (!item || typeof item !== 'object') return null;
+        const id = (window.PawTubeUtils && window.PawTubeUtils.extractMediaId)
+          ? window.PawTubeUtils.extractMediaId(item.id || item.videoId || item.url)
+          : (item.id || item.videoId || (item.url && item.url.slice(-11)));
+        if (!id || id.length !== 11 || !item.title) return null;
+
+        const duration = typeof item.duration === 'number' ? item.duration : (parseInt(item.duration, 10) || 0);
+        return {
+          id: id,
+          url: `https://www.youtube.com/watch?v=${id}`,
+          pawtubeUrl: `#/watch?v=${id}`,
+          title: item.title,
+          channel: item.channel || item.author || item.uploaderName || item.uploader || 'Unknown Channel',
+          author: item.channel || item.author || item.uploaderName || item.uploader || 'Unknown Channel',
+          channelId: item.channelId || item.authorId || (item.uploaderUrl ? item.uploaderUrl.replace(/^\/channel\//, '') : ''),
+          thumb: item.thumb || item.thumbnail || item.thumbnailUrl || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+          avatar: item.avatar || item.authorAvatar || item.uploaderAvatar || '',
+          duration: duration,
+          durationFormatted: item.durationFormatted || (window.PawTubeUtils ? window.PawTubeUtils.formatDuration(duration) : '0:00'),
+          views: item.views || 0,
+          viewsFormatted: item.viewsFormatted || (window.PawTubeUtils ? window.PawTubeUtils.formatViews(item.views) : ''),
+          uploadedFormatted: item.uploadedFormatted || (window.PawTubeUtils ? window.PawTubeUtils.formatUploadedDate(item.uploadedDate || item.publishedTime) : '') || '',
+          isShort: Boolean(item.isShort || (duration > 0 && duration <= 75)),
+          isLive: Boolean(item.isLive || duration < 0)
+        };
+      }).filter(Boolean);
+
       // Apply personalization ranking
-      const rankedVideos = this.rankPersonalizedFeed(videos);
+      const rankedVideos = this.rankPersonalizedFeed(validVideos);
       const grid = document.getElementById('home-grid');
+
       if (grid) {
         if (rankedVideos.length === 0) {
-          grid.innerHTML = this.renderEmptyState('No videos found', 'Try selecting another category or check your connection.');
+          if (!cachedVideos || cachedVideos.length === 0) {
+            grid.innerHTML = this.renderEmptyState('No trending videos available', 'The active instance did not return videos for this category. Try switching categories or refresh.');
+          }
         } else {
+          // Cache successful feed items
+          this.setCachedFeed(this.activeCategory, rankedVideos);
           grid.innerHTML = rankedVideos.map(v => this.renderVideoCard(v)).join('');
         }
       }
     } catch (err) {
-      if (this.abortController.signal.aborted) return;
+      if (feedSignal.aborted) return;
+      console.warn('[PawTube Home Feed] Fetch error:', err.message);
       const grid = document.getElementById('home-grid');
       if (grid) {
-        grid.innerHTML = this.renderErrorState('Unable to load feed', err.message, () => this.renderHomeFeed());
-        window.showToast?.('Unable to load feed. Please try again.');
+        if (!cachedVideos || cachedVideos.length === 0) {
+          grid.innerHTML = this.renderErrorState('Unable to load trending feed', err.message || 'All Piped instances failed to respond. Please check your connection.', () => this.renderHomeFeed());
+          window.showToast?.('Unable to load feed. Please check connection.');
+        } else {
+          window.showToast?.('Displaying saved feed (offline mode)');
+        }
       }
     }
   }
@@ -1996,11 +2060,14 @@ class PawTubeApp {
   renderVideoCard(v) {
     const isSaved = this.store.isWatchLater(v.id);
     const progressPercent = (v.progress && v.duration) ? Math.min(100, (v.progress / v.duration) * 100) : 0;
+    const thumbUrl = v.thumb || v.thumbnail || v.thumbnailUrl || (v.id ? `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg` : '');
+    const channelName = v.channel || v.author || 'Unknown Channel';
+    const channelId = v.channelId || v.authorId || '';
 
     return `
       <div class="video-card" onclick="location.hash='#/watch?v=${v.id}'">
         <div class="thumbnail-wrap">
-          <img src="${v.thumb}" alt="${this.escapeHtml(v.title)}" loading="lazy" />
+          <img src="${thumbUrl}" alt="${this.escapeHtml(v.title)}" loading="lazy" onerror="this.onerror=null;if('${v.id}')this.src='https://i.ytimg.com/vi/${v.id}/hqdefault.jpg';" />
           <div class="duration-badge">${v.durationFormatted || '0:00'}</div>
           ${progressPercent > 0 ? `
             <div class="progress-bar-rail">
@@ -2014,12 +2081,12 @@ class PawTubeApp {
         <div class="card-info">
           ${v.avatar ? `
             <img class="card-avatar" src="${v.avatar}" alt="" loading="lazy" 
-              onclick="event.stopPropagation(); if ('${v.channelId}') location.hash='#/channel?id=${encodeURIComponent(v.channelId)}';" />
+              onclick="event.stopPropagation(); if ('${channelId}') location.hash='#/channel?id=${encodeURIComponent(channelId)}';" onerror="this.style.display='none';" />
           ` : ''}
           <div class="card-meta">
             <div class="card-title">${this.escapeHtml(v.title)}</div>
-            <div class="card-channel" onclick="event.stopPropagation(); if ('${v.channelId}') location.hash='#/channel?id=${encodeURIComponent(v.channelId)}';">
-              ${this.escapeHtml(v.channel)}
+            <div class="card-channel" onclick="event.stopPropagation(); if ('${channelId}') location.hash='#/channel?id=${encodeURIComponent(channelId)}';">
+              ${this.escapeHtml(channelName)}
             </div>
             <div class="card-stats">
               <span>${v.viewsFormatted || ''}</span>

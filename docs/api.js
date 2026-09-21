@@ -48,6 +48,10 @@
   }
 
   const PawTubeAPI = {
+    // Central Piped request engine
+    requestPiped: (endpoint, options) => window.requestPiped ? window.requestPiped(endpoint, options) : (getService()?.provider?.request ? getService().provider.request(endpoint, options) : Promise.reject(new Error('No provider available'))),
+    buildPipedUrl: (baseUrl, endpoint, params) => window.buildPipedUrl ? window.buildPipedUrl(baseUrl, endpoint, params) : '',
+
     // Utility helpers
     formatDuration,
     formatViews,

@@ -172,7 +172,8 @@
       verified = false,
       type = 'video',
       streamInfo = null,
-      related = []
+      related = [],
+      uploadedFormatted = ''
     } = {}) {
       this.id = id;
       this.url = `https://www.youtube.com/watch?v=${id}`;
@@ -192,6 +193,7 @@
       this.viewsFormatted = viewsFormatted || PawTubeUtils.formatViews(views);
       this.uploadedDate = uploadedDate || publishedTime;
       this.publishedTime = publishedTime || uploadedDate;
+      this.uploadedFormatted = uploadedFormatted || PawTubeUtils.formatUploadedDate(this.uploadedDate);
       this.isShort = isShort || (duration > 0 && duration <= 75);
       this.isLive = Boolean(isLive || duration < 0);
       this.verified = Boolean(verified);
@@ -301,6 +303,28 @@
       return num.toLocaleString() + ' subscribers';
     },
 
+    formatUploadedDate(dateVal) {
+      if (!dateVal || dateVal === -1) return '';
+      if (typeof dateVal === 'string') {
+        const trimmed = dateVal.trim();
+        if (trimmed.toLowerCase().includes('ago') || trimmed.toLowerCase() === 'live') {
+          return trimmed;
+        }
+      }
+      const num = typeof dateVal === 'number' ? dateVal : parseInt(String(dateVal), 10);
+      if (num && !isNaN(num) && num > 0) {
+        const ms = num < 10000000000 ? num * 1000 : num;
+        const diffSec = Math.floor((Date.now() - ms) / 1000);
+        if (diffSec < 60) return 'Just now';
+        if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+        if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+        if (diffSec < 2592000) return `${Math.floor(diffSec / 86400)}d ago`;
+        if (diffSec < 31536000) return `${Math.floor(diffSec / 2592000)}mo ago`;
+        return `${Math.floor(diffSec / 31536000)}y ago`;
+      }
+      return '';
+    },
+
     /**
      * Resolves all standard YouTube URL formats, shorts, and raw IDs:
      * - https://www.youtube.com/watch?v=ID
@@ -367,25 +391,85 @@
   }
 
   // =========================================================================
-  // 5. NEWPIPEEXTRACTOR PROVIDER IMPLEMENTATION
+  // 5. CENTRAL PIPED REQUEST ENGINE & INSTANCE MANAGEMENT
   // =========================================================================
 
-  class NewPipeExtractorProvider extends MediaProvider {
+  /**
+   * Canonical Centralized Piped URL Builder
+   * Strictly avoids /api/v1, double slashes, or trailing slashes.
+   * Direct base URL + clean endpoint + query string.
+   */
+  function buildPipedUrl(baseUrl, endpoint, params = {}) {
+    if (!baseUrl || typeof baseUrl !== 'string') {
+      throw new Error('Base URL is required for Piped URL building');
+    }
+    let cleanBase = baseUrl.trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(cleanBase)) {
+      cleanBase = 'https://' + cleanBase;
+    }
+    cleanBase = cleanBase.replace(/\/api\/v1\/?$/i, '');
+
+    let cleanEp = (endpoint || '').trim();
+    if (!cleanEp.startsWith('/')) {
+      cleanEp = '/' + cleanEp;
+    }
+    cleanEp = cleanEp.replace(/\/{2,}/g, '/');
+
+    const [pathOnly, existingQuery] = cleanEp.split('?');
+    const searchParams = new URLSearchParams(existingQuery || '');
+
+    for (const [k, v] of Object.entries(params || {})) {
+      if (v !== undefined && v !== null && v !== '') {
+        searchParams.set(k === 'query' ? 'q' : k, String(v));
+      }
+    }
+
+    const qs = searchParams.toString();
+    return `${cleanBase}${pathOnly}${qs ? '?' + qs : ''}`;
+  }
+
+  // Built-in candidate Piped API instances pool (Prioritizes proven healthy instances)
+  const DEFAULT_PIPED_INSTANCES = [
+    'https://api.piped.private.coffee',
+    'https://pipedapi.ducks.party',
+    'https://pipedapi.adminforge.de',
+    'https://pipedapi.nosebs.ru',
+    'https://api.piped.yt',
+    'https://pipedapi.drgns.space',
+    'https://pipedapi.owo.si',
+    'https://piped-api.codespace.cz',
+    'https://pipedapi.reallyaweso.me',
+    'https://pipedapi.darkness.services',
+    'https://pipedapi.smnz.de'
+  ];
+
+  class PipedInstanceManager {
     constructor() {
-      super('NewPipeExtractor');
+      this.instances = [...DEFAULT_PIPED_INSTANCES];
+      this.healthMap = new Map();
+      this.discoveredInstances = [];
+      this.isDiscovering = false;
+      this.isValidating = false;
 
-      // Verified instances running NewPipeExtractor-compatible backend gateways
-      this.instances = [
-        'https://api.piped.private.coffee',
-        'https://pipedapi.ducks.party',
-        'https://pipedapi.drgns.space',
-        'https://pipedapi.kavin.rocks'
-      ];
-
-      this.instanceHealth = new Map();
       this.instances.forEach((url) => {
-        this.instanceHealth.set(url, { failures: 0, cooldownUntil: 0, latency: 0 });
+        this.healthMap.set(url, {
+          status: 'unknown', // 'healthy', 'degraded', 'unhealthy', 'checking', 'unknown'
+          consecutiveFailures: 0,
+          cooldownUntil: 0,
+          latency: 0,
+          lastSuccess: 0,
+          lastCheck: 0
+        });
       });
+
+      // 1. Load previously discovered instances
+      this.loadCachedDiscovery();
+      // 2. Load recently validated health state from localStorage
+      this.loadPersistedHealth();
+      // 3. Proactively validate top instances in the background
+      setTimeout(() => this.validateCandidates(), 100);
+      // 4. Kick off background dynamic discovery check (non-blocking)
+      setTimeout(() => this.discoverInstances(), 2500);
     }
 
     getCustomInstance() {
@@ -394,8 +478,9 @@
         if (stored) {
           let parsed = stored.trim().replace(/^"|"$/g, '');
           if (parsed.length > 0) {
-            if (!parsed.startsWith('http')) parsed = 'https://' + parsed;
-            return parsed.replace(/\/+$/, '');
+            if (!/^https?:\/\//i.test(parsed)) parsed = 'https://' + parsed;
+            parsed = parsed.replace(/\/+$/, '').replace(/\/api\/v1\/?$/i, '');
+            return parsed;
           }
         }
       } catch (e) {}
@@ -403,57 +488,372 @@
     }
 
     setCustomInstance(url) {
-      if (!url) {
+      if (!url || !url.trim()) {
         localStorage.removeItem('custom_piped_instance');
         return;
       }
       let clean = url.trim();
-      if (!clean.startsWith('http')) clean = 'https://' + clean;
-      clean = clean.replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(clean)) clean = 'https://' + clean;
+      clean = clean.replace(/\/+$/, '').replace(/\/api\/v1\/?$/i, '');
       localStorage.setItem('custom_piped_instance', clean);
+      this.healthMap.set(clean, {
+        status: 'healthy',
+        consecutiveFailures: 0,
+        cooldownUntil: 0,
+        latency: 0,
+        lastSuccess: Date.now(),
+        lastCheck: Date.now()
+      });
+      this.persistHealthMap();
+      // Validate custom instance immediately
+      this.validateInstance(clean, 3500);
     }
 
     resetCustomInstance() {
       localStorage.removeItem('custom_piped_instance');
     }
 
+    loadPersistedHealth() {
+      try {
+        const raw = localStorage.getItem('pawtube_piped_instances_health');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const now = Date.now();
+          if (parsed && typeof parsed === 'object') {
+            for (const [url, data] of Object.entries(parsed)) {
+              // Retain health status verified within the last 20 minutes
+              if (data && now - (data.lastCheck || 0) < 1200000) {
+                this.healthMap.set(url, {
+                  status: data.status || 'unknown',
+                  consecutiveFailures: data.consecutiveFailures || 0,
+                  cooldownUntil: data.cooldownUntil || 0,
+                  latency: data.latency || 0,
+                  lastSuccess: data.lastSuccess || 0,
+                  lastCheck: data.lastCheck || 0
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    persistHealthMap() {
+      try {
+        const obj = {};
+        for (const [url, h] of this.healthMap.entries()) {
+          if (h.status === 'healthy' || h.consecutiveFailures > 0) {
+            obj[url] = {
+              status: h.status,
+              consecutiveFailures: h.consecutiveFailures,
+              cooldownUntil: h.cooldownUntil,
+              latency: h.latency,
+              lastSuccess: h.lastSuccess,
+              lastCheck: h.lastCheck
+            };
+          }
+        }
+        localStorage.setItem('pawtube_piped_instances_health', JSON.stringify(obj));
+      } catch (e) {}
+    }
+
+    loadCachedDiscovery() {
+      try {
+        const raw = localStorage.getItem('pawtube_discovered_piped_instances');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Array.isArray(parsed.instances)) {
+            parsed.instances.forEach((url) => {
+              if (url && typeof url === 'string' && url.startsWith('https://') && !this.instances.includes(url)) {
+                this.instances.push(url);
+                if (!this.healthMap.has(url)) {
+                  this.healthMap.set(url, {
+                    status: 'unknown',
+                    consecutiveFailures: 0,
+                    cooldownUntil: 0,
+                    latency: 0,
+                    lastSuccess: 0,
+                    lastCheck: 0
+                  });
+                }
+              }
+            });
+          }
+        }
+      } catch (e) {}
+    }
+
+    async discoverInstances() {
+      if (this.isDiscovering) return;
+      this.isDiscovering = true;
+      try {
+        const discoveryEndpoints = [
+          'https://piped-instances.kavin.rocks'
+        ];
+
+        for (const endpoint of discoveryEndpoints) {
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 3500);
+            const res = await fetch(endpoint, {
+              signal: controller.signal,
+              headers: { Accept: 'application/json' }
+            });
+            clearTimeout(timer);
+            if (res.ok) {
+              const list = await res.json();
+              if (Array.isArray(list)) {
+                const newAdditions = [];
+                list.forEach((item) => {
+                  const rawUrl = item.api_url || item.apiUrl || (typeof item === 'string' ? item : null);
+                  if (rawUrl && typeof rawUrl === 'string' && rawUrl.startsWith('https://')) {
+                    const clean = rawUrl.replace(/\/+$/, '').replace(/\/api\/v1\/?$/i, '');
+                    if (!this.instances.includes(clean)) {
+                      this.instances.push(clean);
+                      newAdditions.push(clean);
+                      if (!this.healthMap.has(clean)) {
+                        this.healthMap.set(clean, {
+                          status: 'unknown',
+                          consecutiveFailures: 0,
+                          cooldownUntil: 0,
+                          latency: 0,
+                          lastSuccess: 0,
+                          lastCheck: 0
+                        });
+                      }
+                    }
+                  }
+                });
+
+                if (newAdditions.length > 0) {
+                  localStorage.setItem('pawtube_discovered_piped_instances', JSON.stringify({
+                    timestamp: Date.now(),
+                    instances: this.instances
+                  }));
+                  // Validate newly discovered instances in background
+                  this.validateCandidates(newAdditions.slice(0, 4));
+                }
+                break; // First successful discovery source is sufficient
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (err) {
+        // Discovery failure is non-blocking; retain built-in candidate pool
+      } finally {
+        this.isDiscovering = false;
+      }
+    }
+
+    /**
+     * Active validation of a single Piped instance using /trending endpoint
+     */
+    async validateInstance(url, timeoutMs = 3500) {
+      if (!url || !url.startsWith('https://')) return false;
+      const h = this.healthMap.get(url) || {
+        status: 'checking',
+        consecutiveFailures: 0,
+        cooldownUntil: 0,
+        latency: 0,
+        lastSuccess: 0,
+        lastCheck: Date.now()
+      };
+      h.status = 'checking';
+      h.lastCheck = Date.now();
+
+      const startTime = Date.now();
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const targetUrl = buildPipedUrl(url, '/trending', { region: 'US' });
+        const res = await fetch(targetUrl, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' }
+        });
+        clearTimeout(timer);
+        const latency = Date.now() - startTime;
+
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          const data = await res.json();
+          const items = Array.isArray(data) ? data : (data && Array.isArray(data.items) ? data.items : null);
+          if (items && items.length > 0) {
+            h.status = 'healthy';
+            h.consecutiveFailures = 0;
+            h.cooldownUntil = 0;
+            h.latency = latency;
+            h.lastSuccess = Date.now();
+            this.healthMap.set(url, h);
+            this.persistHealthMap();
+
+            // Populate trending cache directly from successful health check probe
+            const trendingKey = `/trending_{"region":"US"}`;
+            if (!pipedCache.has(trendingKey)) {
+              pipedCache.set(trendingKey, { data, timestamp: Date.now() });
+            }
+            return true;
+          }
+        }
+        throw new Error(`Instance response status ${res.status} or invalid payload`);
+      } catch (err) {
+        h.consecutiveFailures += 1;
+        h.status = h.consecutiveFailures >= 2 ? 'unhealthy' : 'degraded';
+        h.cooldownUntil = Date.now() + Math.min(180000, 30000 * h.consecutiveFailures);
+        this.healthMap.set(url, h);
+        this.persistHealthMap();
+        return false;
+      }
+    }
+
+    /**
+     * Validates candidate instances in parallel
+     */
+    async validateCandidates(candidatesToProbe = null) {
+      if (this.isValidating) return;
+      this.isValidating = true;
+      try {
+        const targets = candidatesToProbe || this.instances.slice(0, 5);
+        await Promise.allSettled(targets.map((u) => this.validateInstance(u, 3500)));
+      } finally {
+        this.isValidating = false;
+      }
+    }
+
+    markSuccess(url, latencyMs) {
+      const h = this.healthMap.get(url) || {
+        status: 'healthy',
+        consecutiveFailures: 0,
+        cooldownUntil: 0,
+        latency: 0,
+        lastSuccess: 0,
+        lastCheck: 0
+      };
+      h.status = 'healthy';
+      h.consecutiveFailures = 0;
+      h.cooldownUntil = 0;
+      h.lastSuccess = Date.now();
+      h.latency = h.latency === 0 ? latencyMs : Math.round(h.latency * 0.7 + latencyMs * 0.3);
+      this.healthMap.set(url, h);
+      this.persistHealthMap();
+    }
+
+    markFailure(url) {
+      const h = this.healthMap.get(url) || {
+        status: 'unknown',
+        consecutiveFailures: 0,
+        cooldownUntil: 0,
+        latency: 0,
+        lastSuccess: 0,
+        lastCheck: 0
+      };
+      h.consecutiveFailures += 1;
+      h.status = h.consecutiveFailures >= 2 ? 'unhealthy' : 'degraded';
+      const cooldown = Math.min(180000, 30000 * h.consecutiveFailures);
+      h.cooldownUntil = Date.now() + cooldown;
+      this.healthMap.set(url, h);
+      this.persistHealthMap();
+    }
+
     getCandidateInstances() {
-      const candidates = ['__LOCAL_PROXY__'];
+      const now = Date.now();
       const custom = this.getCustomInstance();
-      if (custom && !candidates.includes(custom)) {
+      const candidates = [];
+
+      // Priority 1: User custom instance
+      if (custom) {
         candidates.push(custom);
       }
 
-      this.instances.forEach((url) => {
-        if (!candidates.includes(url)) {
-          candidates.push(url);
-        }
+      // Priority 2: Healthy instances sorted by latency (fastest first)
+      const pool = [...this.instances];
+      const healthy = pool.filter((u) => {
+        if (u === custom) return false;
+        const h = this.healthMap.get(u);
+        return h && h.status === 'healthy' && now > (h.cooldownUntil || 0);
+      }).sort((a, b) => {
+        const ha = this.healthMap.get(a)?.latency || 9999;
+        const hb = this.healthMap.get(b)?.latency || 9999;
+        return ha - hb;
       });
+      candidates.push(...healthy);
+
+      // Priority 3: First 2 unknown candidate instances for rapid exploration
+      const unknown = pool.filter((u) => {
+        if (u === custom || candidates.includes(u)) return false;
+        const h = this.healthMap.get(u);
+        return (!h || h.status === 'unknown') && now > (h?.cooldownUntil || 0);
+      });
+      candidates.push(...unknown.slice(0, 2));
+
+      // Priority 4: High-reliability local server proxy (Cloud Run backend with multi-instance retry & fallback)
+      candidates.push('__LOCAL_PROXY__');
+
+      // Priority 5: Remaining unknown instances
+      candidates.push(...unknown.slice(2));
+
+      // Priority 6: Degraded instances whose cooldown expired
+      const degraded = pool.filter((u) => {
+        if (u === custom || candidates.includes(u)) return false;
+        const h = this.healthMap.get(u);
+        return h && (h.status === 'degraded' || h.status === 'unhealthy') && now > (h.cooldownUntil || 0);
+      });
+      candidates.push(...degraded);
 
       return candidates;
     }
 
-    markSuccess(url, latencyMs) {
-      const h = this.instanceHealth.get(url);
-      if (h) {
-        h.failures = 0;
-        h.cooldownUntil = 0;
-        h.latency = h.latency === 0 ? latencyMs : Math.round(h.latency * 0.7 + latencyMs * 0.3);
-      }
+    getInstances() {
+      const now = Date.now();
+      return this.instances.map((url) => {
+        const h = this.healthMap.get(url) || { status: 'unknown', consecutiveFailures: 0, cooldownUntil: 0, latency: 0, lastCheck: 0 };
+        return {
+          url,
+          status: h.status,
+          healthy: h.status === 'healthy' && now > (h.cooldownUntil || 0),
+          failures: h.consecutiveFailures,
+          latency: h.latency,
+          lastCheck: h.lastCheck
+        };
+      });
+    }
+  }
+
+  const pipedInstanceManager = new PipedInstanceManager();
+
+  // Central Request Engine Caches & In-Flight Tracker
+  const pipedCache = new Map();
+  const pipedInFlight = new Map();
+
+  /**
+   * Central Piped Request Engine
+   * Requirement 8: Create ONE central function requestPiped(endpoint, options).
+   * Every Piped request must pass through it.
+   */
+  async function requestPiped(endpoint, options = {}) {
+    const { params = {}, signal, timeoutMs = 3800, skipCache = false, ttlMs = 45000 } = options;
+
+    if (signal && signal.aborted) {
+      throw new PawTubeError(ErrorCodes.NETWORK_ERROR, 'Request was aborted', null, false);
     }
 
-    markFailure(url) {
-      const h = this.instanceHealth.get(url);
-      if (h) {
-        h.failures += 1;
-        const cooldown = Math.min(120000, 30000 * h.failures);
-        h.cooldownUntil = Date.now() + cooldown;
+    // 1. In-memory Short-Lived Caching
+    const cacheKey = `${endpoint}_${JSON.stringify(params)}`;
+    const now = Date.now();
+    if (!skipCache && pipedCache.has(cacheKey)) {
+      const entry = pipedCache.get(cacheKey);
+      if (now - entry.timestamp < ttlMs) {
+        return entry.data;
       }
+      pipedCache.delete(cacheKey);
     }
 
-    async request(endpoint, options = {}) {
-      const { params = {}, signal, timeoutMs = 6000 } = options;
-      const candidates = this.getCandidateInstances();
+    // 2. In-Flight Request Deduplication
+    if (pipedInFlight.has(cacheKey)) {
+      return pipedInFlight.get(cacheKey);
+    }
+
+    const executeRequest = async () => {
+      const candidates = pipedInstanceManager.getCandidateInstances();
       let lastError = null;
 
       for (const instance of candidates) {
@@ -476,18 +876,15 @@
               qs.set(k === 'query' ? 'q' : k, String(v));
             }
           }
-          const custom = this.getCustomInstance();
+          const custom = pipedInstanceManager.getCustomInstance();
           if (custom) qs.set('instance', custom);
           targetUrl = `/api/unified?${qs.toString()}`;
         } else {
-          let cleanEp = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
-          const [pathOnly, existingQuery] = cleanEp.split('?');
-          const qs = new URLSearchParams(existingQuery || '');
-          for (const [k, v] of Object.entries(params)) {
-            if (v !== undefined && v !== null && v !== '') qs.set(k, String(v));
+          try {
+            targetUrl = buildPipedUrl(instance, endpoint, params);
+          } catch (e) {
+            continue;
           }
-          const qsStr = qs.toString();
-          targetUrl = `${instance}${pathOnly}${qsStr ? '?' + qsStr : ''}`;
         }
 
         const controller = new AbortController();
@@ -508,28 +905,90 @@
             throw new Error(`HTTP ${res.status}`);
           }
 
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            // Some proxies or captive portals return HTML on errors
+            const text = await res.text();
+            if (text.startsWith('<')) {
+              throw new Error('Received HTML response instead of JSON');
+            }
+            try {
+              const parsed = JSON.parse(text);
+              if (parsed.error) throw new Error(parsed.error);
+              if (instance !== '__LOCAL_PROXY__') {
+                pipedInstanceManager.markSuccess(instance, Date.now() - startTime);
+              }
+              pipedCache.set(cacheKey, { data: parsed, timestamp: Date.now() });
+              return parsed;
+            } catch (e) {
+              throw new Error('Malformed JSON response');
+            }
+          }
+
           const data = await res.json();
           if (data && data.error) {
             throw new Error(data.error);
           }
 
+          // Authoritative Success: Real API request succeeded!
           if (instance !== '__LOCAL_PROXY__') {
-            this.markSuccess(instance, Date.now() - startTime);
+            pipedInstanceManager.markSuccess(instance, Date.now() - startTime);
           }
+
+          pipedCache.set(cacheKey, { data, timestamp: Date.now() });
           return data;
         } catch (err) {
           clearTimeout(timer);
           if (instance !== '__LOCAL_PROXY__') {
-            this.markFailure(instance);
+            pipedInstanceManager.markFailure(instance);
           }
           lastError = err;
           if (signal && signal.aborted) {
             throw PawTubeError.fromError(err);
           }
+          // Continue to next candidate immediately without waiting
         }
       }
 
-      throw PawTubeError.fromError(lastError || new Error('All extractor instances failed'));
+      throw PawTubeError.fromError(lastError || new Error('All Piped instances failed to respond'));
+    };
+
+    const promise = executeRequest().finally(() => {
+      pipedInFlight.delete(cacheKey);
+    });
+
+    pipedInFlight.set(cacheKey, promise);
+    return promise;
+  }
+
+  // =========================================================================
+  // 5B. NEWPIPEEXTRACTOR PROVIDER IMPLEMENTATION
+  // =========================================================================
+
+  class NewPipeExtractorProvider extends MediaProvider {
+    constructor() {
+      super('NewPipeExtractor');
+      this.instanceManager = pipedInstanceManager;
+    }
+
+    getCustomInstance() {
+      return this.instanceManager.getCustomInstance();
+    }
+
+    setCustomInstance(url) {
+      return this.instanceManager.setCustomInstance(url);
+    }
+
+    resetCustomInstance() {
+      return this.instanceManager.resetCustomInstance();
+    }
+
+    getCandidateInstances() {
+      return this.instanceManager.getCandidateInstances();
+    }
+
+    async request(endpoint, options = {}) {
+      return requestPiped(endpoint, options);
     }
 
     normalizeItem(raw) {
@@ -568,6 +1027,7 @@
         viewsFormatted: raw.viewsFormatted || PawTubeUtils.formatViews(views),
         uploadedDate: raw.uploadedDate || raw.uploadDate || raw.uploaded || '',
         publishedTime: raw.publishedTime || raw.uploadedDate || raw.uploadDate || '',
+        uploadedFormatted: raw.uploadedFormatted || PawTubeUtils.formatUploadedDate(raw.uploadedDate || raw.uploadDate || raw.uploaded || raw.publishedTime),
         isShort: duration > 0 && duration <= 75,
         isLive: Boolean(raw.isLive || raw.live || duration < 0),
         verified: Boolean(raw.uploaderVerified || raw.verified),
@@ -828,15 +1288,7 @@
     }
 
     async getInstances() {
-      return this.instances.map((url) => {
-        const h = this.instanceHealth.get(url) || { failures: 0, cooldownUntil: 0, latency: 0 };
-        return {
-          url,
-          healthy: Date.now() >= h.cooldownUntil,
-          failures: h.failures,
-          latency: h.latency
-        };
-      });
+      return this.instanceManager.getInstances();
     }
   }
 
@@ -1081,6 +1533,9 @@
   window.PawTubeError = PawTubeError;
   window.PawTubeErrorCodes = ErrorCodes;
   window.PawTubeUtils = PawTubeUtils;
+  window.buildPipedUrl = buildPipedUrl;
+  window.requestPiped = requestPiped;
+  window.pipedInstanceManager = pipedInstanceManager;
   window.MediaItem = MediaItem;
   window.Channel = Channel;
   window.Playlist = Playlist;
@@ -1097,6 +1552,8 @@
 
   // Backward compatibility alias for any existing code
   window.PawTubeAPI = {
+    buildPipedUrl: buildPipedUrl,
+    requestPiped: requestPiped,
     formatDuration: PawTubeUtils.formatDuration,
     formatViews: PawTubeUtils.formatViews,
     formatSubscriberCount: PawTubeUtils.formatSubscriberCount,
@@ -1112,6 +1569,9 @@
     getChannel: (id, opt) => mediaService.getChannel(id, opt),
     getChannelVideos: (id, opt) => mediaService.getChannelVideos(id, opt),
     getPlaylist: (id, opt) => mediaService.getPlaylist(id, opt),
-    getInstances: () => mediaService.getInstances()
+    getInstances: () => mediaService.getInstances(),
+    getCustomInstance: () => mediaService.getCustomInstance(),
+    setCustomInstance: (url) => mediaService.setCustomInstance(url),
+    resetCustomInstance: () => mediaService.resetCustomInstance()
   };
 })();
