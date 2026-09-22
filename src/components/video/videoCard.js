@@ -3,6 +3,7 @@
  */
 
 import { escapeHtml } from '../../utils/dom.js';
+import { getHistory } from '../../storage/history/historyStorage.js';
 
 export function renderVideoCard(v) {
   if (!v || !v.id) return '';
@@ -20,11 +21,28 @@ export function renderVideoCard(v) {
   const isVerified = Boolean(v.uploaderVerified || v.verified);
   const avatarUrl = v.avatar || v.uploaderAvatar || '';
 
+  // Check watch progress in history
+  let watchedPercent = v.watchedPercentage || 0;
+  if (!watchedPercent) {
+    try {
+      const hist = getHistory();
+      const match = hist.find((h) => h.id === v.id);
+      if (match && match.watchedPercentage) {
+        watchedPercent = match.watchedPercentage;
+      }
+    } catch {}
+  }
+
   return `
     <div class="video-card" data-video-id="${escapeHtml(v.id)}" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
-      <div class="thumbnail-wrap">
+      <div class="thumbnail-wrap" style="position:relative;overflow:hidden;border-radius:12px;">
         <img src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(v.title)}" loading="lazy" onerror="this.onerror=null;if('${escapeHtml(v.id)}')this.src='https://i.ytimg.com/vi/${escapeHtml(v.id)}/hqdefault.jpg';" />
         <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
+        ${watchedPercent > 0 ? `
+          <div class="video-card-progress" style="position:absolute;bottom:0;left:0;right:0;height:3.5px;background:rgba(255,255,255,0.25);z-index:2;">
+            <div style="height:100%;background:var(--brand-red);width:${Math.min(100, Math.max(0, watchedPercent))}%;"></div>
+          </div>
+        ` : ''}
       </div>
       <div class="card-info">
         ${avatarUrl ? `
@@ -38,7 +56,7 @@ export function renderVideoCard(v) {
         <div class="card-meta">
           <div class="card-title-row">
             <div class="card-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
-            <button type="button" class="card-overflow-btn" aria-label="Video options" 
+            <button type="button" class="card-overflow-btn" aria-label="Video options" style="width:40px;height:40px;display:flex;align-items:center;justify-content:center;margin:-6px -8px 0 0;"
               onclick="event.stopPropagation(); if (window.pawtubeOpenCardMenu) window.pawtubeOpenCardMenu(this, event, '${escapeHtml(v.id)}', '${escapeHtml(v.title.replace(/'/g, "\\'"))}', '${escapeHtml(cleanChannelId)}', '${escapeHtml(channelName.replace(/'/g, "\\'"))}');">
               <span class="material-symbols-rounded">more_vert</span>
             </button>

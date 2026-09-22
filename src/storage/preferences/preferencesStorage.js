@@ -1,16 +1,43 @@
 /**
- * PawTube - User Preferences & Subscriptions Storage
+ * PawTube - User Preferences, Subscriptions & Identity Storage
  */
 
 const PREFS_KEY = 'pawtube_prefs';
 const SUBS_KEY = 'pawtube_subscriptions';
 
-const DEFAULT_PREFS = {
-  region: 'US',
-  customInstance: '',
+export const DEFAULT_PREFS = {
+  // PLAYBACK
   autoplay: true,
+  defaultQuality: 'auto', // 'auto' | '1080p' | '720p' | '480p' | '360p'
+  captions: false,
+  rememberPosition: true,
+
+  // APPEARANCE
+  theme: 'amoled', // 'amoled' | 'midnight'
+  liquidGlass: true,
   reducedMotion: false,
-  highQuality: true
+
+  // PRIVACY
+  historyEnabled: true,
+  searchHistoryEnabled: true,
+  personalizationEnabled: true,
+
+  // FEED
+  region: 'IN', // 'IN' | 'US' | 'GB' | 'DE' | 'JP' | 'FR' | 'CA'
+  hideShorts: false,
+
+  // PLAYER
+  miniPlayerEnabled: true,
+  theatreModeDefault: false,
+  rememberVolume: true,
+  savedVolume: 100,
+
+  // INSTANCE & NETWORK
+  customInstance: '',
+
+  // LOCAL IDENTITY
+  username: 'PawTube Explorer',
+  avatarTheme: 'blue' // 'blue' | 'purple' | 'emerald' | 'amber' | 'crimson'
 };
 
 export function getPreferences() {
@@ -27,10 +54,52 @@ export function savePreferences(prefs) {
     const current = getPreferences();
     const updated = { ...current, ...prefs };
     localStorage.setItem(PREFS_KEY, JSON.stringify(updated));
+    applyAppearancePreferences(updated);
+    window.dispatchEvent(new CustomEvent('pawtube:prefsChanged', { detail: updated }));
     return updated;
   } catch (err) {
     console.error('Failed to save preferences:', err);
     return getPreferences();
+  }
+}
+
+export function applyAppearancePreferences(prefs = getPreferences()) {
+  try {
+    const root = document.documentElement;
+
+    // Theme (AMOLED vs Midnight)
+    if (prefs.theme === 'midnight') {
+      root.setAttribute('data-theme', 'midnight');
+    } else {
+      root.removeAttribute('data-theme');
+    }
+
+    // Liquid Glass effects
+    if (prefs.liquidGlass === false) {
+      root.classList.add('no-glass');
+    } else {
+      root.classList.remove('no-glass');
+    }
+
+    // Reduced motion
+    if (prefs.reducedMotion) {
+      root.classList.add('reduced-motion');
+    } else {
+      root.classList.remove('reduced-motion');
+    }
+  } catch (e) {
+    console.warn('Failed to apply appearance preferences:', e);
+  }
+}
+
+export function resetPreferences() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(DEFAULT_PREFS));
+    applyAppearancePreferences(DEFAULT_PREFS);
+    window.dispatchEvent(new CustomEvent('pawtube:prefsChanged', { detail: DEFAULT_PREFS }));
+    return DEFAULT_PREFS;
+  } catch (err) {
+    return DEFAULT_PREFS;
   }
 }
 
@@ -96,4 +165,37 @@ export function toggleSubscription(channel) {
 export const getFollowedChannels = getSubscriptions;
 export const isFollowed = isSubscribed;
 export const toggleFollow = toggleSubscription;
+
+/**
+ * Export all local PawTube data as a downloadable JSON object
+ */
+export function exportAllUserData() {
+  return {
+    version: '1.2.0',
+    exportedAt: new Date().toISOString(),
+    preferences: getPreferences(),
+    subscriptions: getSubscriptions(),
+    history: JSON.parse(localStorage.getItem('pawtube_history') || '[]'),
+    playlists: JSON.parse(localStorage.getItem('pawtube_playlists') || '[]'),
+    likedVideos: JSON.parse(localStorage.getItem('pawtube_liked_videos') || '[]'),
+    recentSearches: JSON.parse(localStorage.getItem('pawtube_recent_searches') || '[]')
+  };
+}
+
+/**
+ * Completely wipe local PawTube storage
+ */
+export function clearAllLocalUserData() {
+  const keys = [
+    PREFS_KEY,
+    SUBS_KEY,
+    'pawtube_history',
+    'pawtube_playlists',
+    'pawtube_liked_videos',
+    'pawtube_recent_searches',
+    'pawtube_video_cache'
+  ];
+  keys.forEach((k) => localStorage.removeItem(k));
+  applyAppearancePreferences(DEFAULT_PREFS);
+}
 

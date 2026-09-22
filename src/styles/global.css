@@ -25,6 +25,53 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Explicit accessibility & user input preservation */
+input,
+textarea,
+[contenteditable="true"],
+.selectable-text,
+.watch-description-content,
+pre,
+code {
+  user-select: text;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Reduced Motion Mode */
+html.reduced-motion *,
+html.reduced-motion *::before,
+html.reduced-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* No Liquid Glass (Solid Dark) Mode */
+html.no-glass,
+html.no-glass * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Midnight Theme Palette */
+html[data-theme="midnight"] {
+  --bg-primary: #070b14;
+  --bg-secondary: #0c1220;
+  --bg-surface: #121a2e;
+  --bg-elevated: rgba(255, 255, 255, 0.05);
+  --bg-hover: rgba(255, 255, 255, 0.09);
+  --bg-active: rgba(255, 255, 255, 0.14);
 }
 
 /* Material Symbols Rounded */
@@ -102,4 +149,84 @@ button, input {
   animation: skeletonPulse 1.6s ease-in-out infinite;
   background: linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.12) 50%, rgba(255, 255, 255, 0.05) 100%);
   background-size: 200% 100%;
+}
+
+/* iOS / Liquid Glass Toggle Switch */
+.switch-container {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.switch-container input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.16);
+  transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 24px;
+  border: 1px solid var(--glass-border);
+}
+
+.switch-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 2px;
+  bottom: 2px;
+  background-color: #ffffff;
+  transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.switch-container input:checked + .switch-slider {
+  background-color: var(--brand-blue);
+  border-color: var(--brand-blue);
+}
+
+.switch-container input:checked + .switch-slider:before {
+  transform: translateX(20px);
+}
+
+.switch-container input:focus-visible + .switch-slider {
+  outline: 2px solid var(--brand-blue);
+  outline-offset: 2px;
+}
+
+/* Interactive Card & Link Hover States */
+.you-quick-link:hover {
+  background-color: var(--bg-hover) !important;
+  transform: translateY(-2px);
+}
+
+.continue-you-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+.sub-creator-item {
+  transition: transform 0.15s ease;
+}
+
+.sub-creator-item:hover {
+  transform: scale(1.05);
+}
+
+.recent-search-chip:hover {
+  background-color: var(--bg-hover) !important;
+  color: var(--text-primary) !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
 }

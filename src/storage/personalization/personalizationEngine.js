@@ -6,7 +6,7 @@
 
 import { getHistory } from '../history/historyStorage.js';
 import { getPlaylists } from '../playlists/playlistStorage.js';
-import { getSubscriptions } from '../preferences/preferencesStorage.js';
+import { getSubscriptions, getPreferences } from '../preferences/preferencesStorage.js';
 
 const SEARCH_HISTORY_KEY = 'pawtube_recent_searches';
 const MAX_SEARCHES = 15;
@@ -19,6 +19,9 @@ const STOP_WORDS = new Set([
 
 export function recordSearchQuery(query) {
   if (!query || typeof query !== 'string') return;
+  const prefs = getPreferences();
+  if (prefs.searchHistoryEnabled === false) return;
+
   const clean = query.trim().toLowerCase();
   if (clean.length < 2) return;
 
@@ -37,6 +40,20 @@ export function getRecentSearches() {
   } catch {
     return [];
   }
+}
+
+export function clearRecentSearches() {
+  try {
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+  } catch {}
+}
+
+export function removeRecentSearch(query) {
+  if (!query) return;
+  try {
+    const list = getRecentSearches().filter((q) => q !== query);
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(list));
+  } catch {}
 }
 
 /**
@@ -131,9 +148,14 @@ export function rankFeedItems(rawItems) {
     }
   }
 
+  const prefs = getPreferences();
+  if (prefs.personalizationEnabled === false) {
+    return deduped;
+  }
+
   const profile = buildUserProfile();
 
-  // If user is fresh with no history, return clean India feed normally in original order
+  // If user is fresh with no history, return clean feed normally in original order
   if (!profile.hasEnoughHistory) {
     return deduped;
   }

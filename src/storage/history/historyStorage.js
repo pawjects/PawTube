@@ -9,6 +9,8 @@ const MAX_HISTORY = 100;
 let lastProgressSaveTime = 0;
 let pendingProgressTimer = null;
 
+import { getPreferences } from '../preferences/preferencesStorage.js';
+
 export function getHistory() {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
@@ -21,6 +23,9 @@ export function getHistory() {
 
 export function addToHistory(item) {
   if (!item || !item.id) return;
+  const prefs = getPreferences();
+  if (prefs.historyEnabled === false) return;
+
   try {
     const list = getHistory();
     const existing = list.find((i) => i.id === item.id);
@@ -46,6 +51,8 @@ export function addToHistory(item) {
 
 export function updateHistoryProgress(videoId, progressSeconds, durationSeconds) {
   if (!videoId || typeof progressSeconds !== 'number') return;
+  const prefs = getPreferences();
+  if (prefs.historyEnabled === false) return;
   
   const now = Date.now();
   const doSave = () => {
