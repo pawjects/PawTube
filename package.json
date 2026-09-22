@@ -7,7 +7,7 @@
     "dev": "node server.js",
     "build": "vite build",
     "start": "node server.js",
-    "lint": "node -c server.js && node -c api/_piped.js && node -c api/piped/trending.js && node -c api/piped/search.js && node -c api/piped/video.js && node -c api/health.js"
+    "lint": "node -c server.js && node -c api/_piped.js && node -c api/piped/trending.js && node -c api/piped/search.js && node -c api/piped/video.js && node -c api/piped/comments.js && node -c api/health.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

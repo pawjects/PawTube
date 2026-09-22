@@ -5,9 +5,9 @@
 
 const DEFAULT_INSTANCES = [
   'https://pipedapi.ducks.party',
+  'https://api.piped.private.coffee',
   'https://api.piped.privacydev.net',
-  'https://piped-api.lunar.icu',
-  'https://api.piped.private.coffee'
+  'https://piped-api.lunar.icu'
 ];
 
 // In-memory cache for serverless execution reuse
@@ -168,7 +168,11 @@ async function requestPiped(endpoint, params = {}, options = {}) {
       memoryCache.set(cacheKey, { data, timestamp: now, instance: cleanBase });
       return { data, cached: false, instance: cleanBase };
     } catch (err) {
-      markFailure(cleanBase);
+      // Only penalize instance health for server/network/html errors, not 4xx client errors
+      const isClientError = err.message && /^HTTP 4\d\d$/.test(err.message);
+      if (!isClientError) {
+        markFailure(cleanBase);
+      }
       lastError = err;
     }
   }
@@ -209,13 +213,15 @@ function formatDuration(seconds) {
 }
 
 function formatViews(views) {
-  if (!views) return '0 views';
+  if (views === null || views === undefined) return '';
   const num = typeof views === 'number' ? views : parseInt(String(views).replace(/[^0-9]/g, ''), 10);
-  if (!num || isNaN(num)) return '0 views';
+  if (isNaN(num)) return '';
+  if (num === 0) return '0 views';
+  if (num === 1) return '1 view';
   if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B views';
   if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M views';
   if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K views';
-  return num.toLocaleString() + ' views';
+  return `${num.toLocaleString()} views`;
 }
 
 function formatUploadedDate(dateVal) {
@@ -223,17 +229,28 @@ function formatUploadedDate(dateVal) {
   if (typeof dateVal === 'string') {
     const trimmed = dateVal.trim();
     if (trimmed.toLowerCase().includes('ago') || trimmed.toLowerCase() === 'live') return trimmed;
+    const parsed = Date.parse(trimmed);
+    if (!isNaN(parsed) && parsed > 0) {
+      dateVal = parsed;
+    }
   }
   const num = typeof dateVal === 'number' ? dateVal : parseInt(String(dateVal), 10);
   if (num && !isNaN(num) && num > 0) {
     const ms = num < 10000000000 ? num * 1000 : num;
-    const diffSec = Math.floor((Date.now() - ms) / 1000);
+    const diffSec = Math.max(0, Math.floor((Date.now() - ms) / 1000));
     if (diffSec < 60) return 'Just now';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
-    if (diffSec < 2592000) return `${Math.floor(diffSec / 86400)}d ago`;
-    if (diffSec < 31536000) return `${Math.floor(diffSec / 2592000)}mo ago`;
-    return `${Math.floor(diffSec / 31536000)}y ago`;
+    const minutes = Math.floor(diffSec / 60);
+    if (minutes < 60) return minutes === 1 ? '1 minute ago' : `${minutes} minutes ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return days === 1 ? '1 day ago' : `${days} days ago`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return weeks === 1 ? '1 week ago' : `${weeks} weeks ago`;
+    const months = Math.floor(days / 30.4375);
+    if (months < 12) return months <= 1 ? '1 month ago' : `${months} months ago`;
+    const years = Math.floor(days / 365.25);
+    return years <= 1 ? '1 year ago' : `${years} years ago`;
   }
   return '';
 }

@@ -24,7 +24,9 @@ export const DEFAULT_PREFS = {
 
   // FEED
   region: 'IN', // 'IN' | 'US' | 'GB' | 'DE' | 'JP' | 'FR' | 'CA'
+  freshFeed: true,
   hideShorts: false,
+  hideLive: false,
 
   // PLAYER
   miniPlayerEnabled: true,
@@ -36,7 +38,7 @@ export const DEFAULT_PREFS = {
   customInstance: '',
 
   // LOCAL IDENTITY
-  username: 'PawTube Explorer',
+  username: 'Explorer',
   avatarTheme: 'blue' // 'blue' | 'purple' | 'emerald' | 'amber' | 'crimson'
 };
 

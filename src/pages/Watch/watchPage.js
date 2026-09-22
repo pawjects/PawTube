@@ -169,6 +169,33 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
                 <span class="material-symbols-rounded" id="description-toggle-icon" style="font-size:18px;">expand_more</span>
               </button>
             </div>
+
+            <!-- Video Comments Section -->
+            <div class="watch-comments-container" id="comments-section" style="margin-top:18px;padding:16px 20px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);">
+              <div id="comments-toggle-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;user-select:none;">
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span class="material-symbols-rounded" style="color:var(--brand-blue);font-size:20px;">chat</span>
+                  <span style="font-size:15px;font-weight:600;color:var(--text-primary);">Comments</span>
+                  <span id="comments-count-pill" style="font-size:12px;padding:2px 8px;border-radius:999px;background:var(--bg-elevated);color:var(--text-secondary);font-weight:500;">
+                    Load comments
+                  </span>
+                </div>
+                <span class="material-symbols-rounded" id="comments-toggle-icon" style="font-size:22px;color:var(--text-secondary);transition:transform 0.2s;">expand_more</span>
+              </div>
+
+              <div id="comments-body" style="display:none;margin-top:16px;">
+                <div id="comments-list" style="display:flex;flex-direction:column;gap:14px;">
+                  <div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">
+                    Loading comments...
+                  </div>
+                </div>
+                <div id="comments-more-wrapper" style="display:none;margin-top:16px;text-align:center;">
+                  <button id="comments-more-btn" type="button" style="padding:8px 22px;border-radius:999px;background:var(--bg-elevated);border:1px solid var(--glass-border);color:var(--text-primary);font-size:13px;font-weight:500;cursor:pointer;transition:background 0.15s;">
+                    Load more comments
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -369,6 +396,132 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
       if (descToggleIcon) descToggleIcon.textContent = isExpanded ? 'expand_less' : 'expand_more';
     });
   }
+
+  // ==========================================
+  // Comments Toggle & Fetch Logic
+  // ==========================================
+  const commentsHeader = container.querySelector('#comments-toggle-header');
+  const commentsBody = container.querySelector('#comments-body');
+  const commentsIcon = container.querySelector('#comments-toggle-icon');
+  const commentsPill = container.querySelector('#comments-count-pill');
+  const commentsList = container.querySelector('#comments-list');
+  const commentsMoreWrapper = container.querySelector('#comments-more-wrapper');
+  const commentsMoreBtn = container.querySelector('#comments-more-btn');
+
+  let commentsLoaded = false;
+  let commentsLoading = false;
+  let commentsNextPage = null;
+
+  const renderCommentItem = (c) => {
+    const avatarHtml = c.avatar
+      ? `<img src="${escapeHtml(c.avatar)}" alt="" style="width:34px;height:34px;border-radius:50%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />`
+      : `<span class="material-symbols-rounded" style="font-size:24px;color:var(--text-secondary);">account_circle</span>`;
+
+    const likesText = (typeof c.likes === 'number' && c.likes > 0) ? `${Number(c.likes).toLocaleString()}` : '';
+
+    return `
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <div style="width:34px;height:34px;border-radius:50%;overflow:hidden;background:var(--bg-elevated);flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+          ${avatarHtml}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
+            <span style="font-size:13px;font-weight:600;color:var(--text-primary);">${escapeHtml(c.author)}</span>
+            ${c.verified ? `<span class="material-symbols-rounded" style="font-size:14px;color:var(--brand-blue);" title="Verified">check_circle</span>` : ''}
+            ${c.time ? `<span style="font-size:11.5px;color:var(--text-secondary);">&bull; ${escapeHtml(c.time)}</span>` : ''}
+          </div>
+          <div style="font-size:13px;line-height:1.5;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;">${escapeHtml(c.text)}</div>
+          ${likesText ? `
+            <div style="display:flex;align-items:center;gap:4px;margin-top:6px;font-size:11.5px;color:var(--text-secondary);">
+              <span class="material-symbols-rounded" style="font-size:14px;">thumb_up</span>
+              <span>${likesText}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  };
+
+  const loadComments = async (isNextPage = false) => {
+    if (commentsLoading) return;
+    commentsLoading = true;
+
+    if (!isNextPage) {
+      if (commentsPill) commentsPill.textContent = 'Loading...';
+    } else if (commentsMoreBtn) {
+      commentsMoreBtn.textContent = 'Loading more...';
+      commentsMoreBtn.disabled = true;
+    }
+
+    try {
+      const res = await PipedApi.getComments(cleanId, isNextPage ? commentsNextPage : null);
+      if (currentSeq !== watchRenderSeq) return;
+
+      const comments = res?.comments || [];
+      commentsNextPage = res?.nextpage || null;
+
+      if (!isNextPage) {
+        commentsLoaded = true;
+        if (comments.length === 0) {
+          if (res?.disabled) {
+            if (commentsPill) commentsPill.textContent = 'Disabled';
+            if (commentsList) commentsList.innerHTML = `<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">Comments are turned off for this video.</div>`;
+          } else {
+            if (commentsPill) commentsPill.textContent = '0';
+            if (commentsList) commentsList.innerHTML = `<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">No comments yet.</div>`;
+          }
+        } else {
+          if (commentsPill) commentsPill.textContent = `${comments.length}+`;
+          if (commentsList) {
+            commentsList.innerHTML = comments.map(renderCommentItem).join('');
+          }
+        }
+      } else {
+        if (commentsList && comments.length > 0) {
+          const temp = document.createElement('div');
+          temp.innerHTML = comments.map(renderCommentItem).join('');
+          while (temp.firstChild) {
+            commentsList.appendChild(temp.firstChild);
+          }
+        }
+      }
+
+      if (commentsMoreWrapper && commentsMoreBtn) {
+        if (commentsNextPage) {
+          commentsMoreWrapper.style.display = 'block';
+          commentsMoreBtn.textContent = 'Load more comments';
+          commentsMoreBtn.disabled = false;
+        } else {
+          commentsMoreWrapper.style.display = 'none';
+        }
+      }
+    } catch (err) {
+      if (!isNextPage && commentsList) {
+        commentsList.innerHTML = `<div style="text-align:center;padding:16px 0;color:var(--text-secondary);font-size:13px;">Comments unavailable at this time.</div>`;
+        if (commentsPill) commentsPill.textContent = 'Unavailable';
+      }
+    } finally {
+      commentsLoading = false;
+    }
+  };
+
+  commentsHeader?.addEventListener('click', () => {
+    if (!commentsBody) return;
+    const isHidden = commentsBody.style.display === 'none';
+    commentsBody.style.display = isHidden ? 'block' : 'none';
+    if (commentsIcon) {
+      commentsIcon.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+    }
+    if (isHidden && !commentsLoaded) {
+      loadComments(false);
+    }
+  });
+
+  commentsMoreBtn?.addEventListener('click', () => {
+    if (commentsNextPage) {
+      loadComments(true);
+    }
+  });
 
   // ==========================================
   // Asynchronously fetch video metadata from Piped

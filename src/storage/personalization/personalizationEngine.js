@@ -7,6 +7,7 @@
 import { getHistory } from '../history/historyStorage.js';
 import { getPlaylists } from '../playlists/playlistStorage.js';
 import { getSubscriptions, getPreferences } from '../preferences/preferencesStorage.js';
+import { getLikedVideos } from '../likes/likesStorage.js';
 
 const SEARCH_HISTORY_KEY = 'pawtube_recent_searches';
 const MAX_SEARCHES = 15;
@@ -58,7 +59,8 @@ export function removeRecentSearch(query) {
 
 /**
  * Build lightweight local user preference weights based on:
- * - Watch history (watched channels, titles, watch duration/progress)
+ * - Watch history (channels, topics, watch completion rate)
+ * - Liked videos
  * - Saved playlists
  * - Subscribed channels
  * - Recent search queries
@@ -68,6 +70,7 @@ export function buildUserProfile() {
   const playlists = getPlaylists();
   const subs = getSubscriptions();
   const searches = getRecentSearches();
+  const likes = getLikedVideos();
 
   const channelWeights = new Map();
   const keywordWeights = new Map();
@@ -80,7 +83,16 @@ export function buildUserProfile() {
     if (id) channelWeights.set(id, (channelWeights.get(id) || 0) + 35);
   });
 
-  // 2. Process Saved Playlists
+  // 2. Process Liked Videos
+  likes.forEach((v) => {
+    const ch = (v.channel || v.author || '').toLowerCase().trim();
+    if (ch) channelWeights.set(ch, (channelWeights.get(ch) || 0) + 15);
+    extractKeywords(v.title || '').forEach((kw) => {
+      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 4);
+    });
+  });
+
+  // 3. Process Saved Playlists
   playlists.forEach((pl) => {
     (pl.videos || []).forEach((v) => {
       const ch = (v.channel || v.author || '').toLowerCase().trim();
@@ -91,19 +103,22 @@ export function buildUserProfile() {
     });
   });
 
-  // 3. Process Watch History
+  // 4. Process Watch History with completion rate awareness
   history.forEach((h, idx) => {
-    const recencyMultiplier = Math.max(0.3, 1 - idx * 0.03); // More recent videos have higher weight
+    const recencyMultiplier = Math.max(0.3, 1 - idx * 0.03); // More recent items have higher weight
+    const watchedPct = h.watchedPercentage || 0;
+    const engagementBoost = watchedPct >= 50 ? 1.5 : (watchedPct < 15 ? 0.5 : 1.0);
+
     const ch = (h.channel || h.author || '').toLowerCase().trim();
     if (ch) {
-      channelWeights.set(ch, (channelWeights.get(ch) || 0) + 6 * recencyMultiplier);
+      channelWeights.set(ch, (channelWeights.get(ch) || 0) + 6 * recencyMultiplier * engagementBoost);
     }
     extractKeywords(h.title || '').forEach((kw) => {
-      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 2 * recencyMultiplier);
+      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 2 * recencyMultiplier * engagementBoost);
     });
   });
 
-  // 4. Process Recent Searches
+  // 5. Process Recent Searches
   searches.forEach((q, idx) => {
     const recencyMultiplier = Math.max(0.4, 1 - idx * 0.05);
     extractKeywords(q).forEach((kw) => {
@@ -111,7 +126,7 @@ export function buildUserProfile() {
     });
   });
 
-  const totalInteractions = history.length + subs.length + searches.length;
+  const totalInteractions = history.length + subs.length + searches.length + likes.length;
   return {
     channelWeights,
     keywordWeights,
@@ -131,7 +146,7 @@ function extractKeywords(text) {
 
 /**
  * Personalized Feed Ranking Pipeline:
- * Piped India content -> deduplicate -> score against local profile -> re-rank -> filter recently finished
+ * Deduplicate -> compute local relevance -> rank -> apply diversity guard -> balance with discovery
  */
 export function rankFeedItems(rawItems) {
   if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
@@ -155,16 +170,16 @@ export function rankFeedItems(rawItems) {
 
   const profile = buildUserProfile();
 
-  // If user is fresh with no history, return clean feed normally in original order
+  // If user has no interaction history, return original trending order
   if (!profile.hasEnoughHistory) {
     return deduped;
   }
 
-  // Build recently fully watched lookup (watched > 85% in the last 3 hours)
+  // Build recently fully watched lookup (watched > 85% in the last 12 hours)
   const recentlyCompleted = new Set();
   const now = Date.now();
   profile.history.forEach((h) => {
-    if (h.id && h.watchedAt && now - h.watchedAt < 3 * 3600 * 1000) {
+    if (h.id && h.watchedAt && now - h.watchedAt < 12 * 3600 * 1000) {
       if (h.watchedPercentage && h.watchedPercentage > 85) {
         recentlyCompleted.add(h.id);
       }
@@ -173,16 +188,16 @@ export function rankFeedItems(rawItems) {
 
   // 2. Compute local relevance score for each item
   const scored = deduped.map((item, index) => {
-    // Preserve natural trending rank as foundation so high-ranking India trends remain strong
+    // Preserve natural discovery rank as base
     const baseRankScore = (deduped.length - index) * 3;
     let relevanceScore = 0;
 
     const ch = (item.channel || item.author || '').toLowerCase().trim();
     const chId = (item.channelId || item.authorId || (item.uploaderUrl ? item.uploaderUrl.replace(/^\/channel\//, '') : '')).toLowerCase().trim();
     if (ch && profile.channelWeights.has(ch)) {
-      relevanceScore += Math.min(60, profile.channelWeights.get(ch) * 2.5);
+      relevanceScore += Math.min(50, profile.channelWeights.get(ch) * 2.0);
     } else if (chId && profile.channelWeights.has(chId)) {
-      relevanceScore += Math.min(60, profile.channelWeights.get(chId) * 2.5);
+      relevanceScore += Math.min(50, profile.channelWeights.get(chId) * 2.0);
     }
 
     const keywords = extractKeywords(item.title || '');
@@ -192,19 +207,37 @@ export function rankFeedItems(rawItems) {
         matchedKwScore += profile.keywordWeights.get(kw) * 1.5;
       }
     });
-    relevanceScore += Math.min(40, matchedKwScore);
+    relevanceScore += Math.min(35, matchedKwScore);
 
-    // Minor penalty if video was already completed recently
+    // Penalty if video was already completed recently to avoid repeating
     if (recentlyCompleted.has(item.id)) {
       relevanceScore -= 30;
     }
 
     const finalScore = baseRankScore + relevanceScore;
-    return { item, finalScore };
+    return { item, finalScore, channel: ch || chId };
   });
 
   // 3. Sort by finalScore descending
   scored.sort((a, b) => b.finalScore - a.finalScore);
 
-  return scored.map((s) => s.item);
+  // 4. Apply Channel Diversity Guard:
+  // Avoid more than 2 consecutive or 3 total items from the same channel in top 15
+  const ranked = [];
+  const deferred = [];
+  const channelCount = new Map();
+
+  for (const s of scored) {
+    const chKey = s.channel || 'unknown';
+    const count = channelCount.get(chKey) || 0;
+    if (count >= 2 && ranked.length < 15) {
+      deferred.push(s.item);
+    } else {
+      channelCount.set(chKey, count + 1);
+      ranked.push(s.item);
+    }
+  }
+
+  // Append any deferred items at the end
+  return [...ranked, ...deferred];
 }

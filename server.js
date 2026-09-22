@@ -21,11 +21,6 @@ app.all('/api/*', async (req, res) => {
 
     let matchedFile = candidates.find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
 
-    // Legacy fallback to unified handler if not found
-    if (!matchedFile && fs.existsSync(path.join(__dirname, 'api', 'unified.js'))) {
-      matchedFile = path.join(__dirname, 'api', 'unified.js');
-    }
-
     if (matchedFile) {
       delete require.cache[require.resolve(matchedFile)];
       const handler = require(matchedFile);

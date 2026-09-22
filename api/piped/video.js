@@ -28,6 +28,9 @@ module.exports = async function handler(req, res) {
       ? data.relatedStreams.map(normalizeMediaItem).filter(Boolean)
       : [];
 
+    const likes = (typeof data.likes === 'number' && data.likes >= 0) ? data.likes : null;
+    const views = (typeof data.views === 'number' && data.views >= 0) ? data.views : null;
+
     sendResponse(res, 200, {
       id: videoId,
       title: data.title || 'YouTube Video',
@@ -38,9 +41,9 @@ module.exports = async function handler(req, res) {
       avatar: data.uploaderAvatar || '',
       thumb: data.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       duration: data.duration || 0,
-      views: data.views || 0,
-      likes: data.likes || 0,
-      dislikes: data.dislikes || 0,
+      views,
+      likes,
+      dislikes: typeof data.dislikes === 'number' ? data.dislikes : null,
       uploadDate: data.uploadDate || '',
       videoStreams: data.videoStreams || [],
       audioStreams: data.audioStreams || [],
@@ -67,7 +70,8 @@ module.exports = async function handler(req, res) {
           avatar: '',
           thumb: meta.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
           duration: 0,
-          views: 0,
+          views: null,
+          likes: null,
           uploadDate: '',
           videoStreams: [],
           audioStreams: [],
@@ -92,7 +96,8 @@ module.exports = async function handler(req, res) {
       avatar: '',
       thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
       duration: 0,
-      views: 0,
+      views: null,
+      likes: null,
       uploadDate: '',
       videoStreams: [],
       audioStreams: [],

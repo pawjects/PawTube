@@ -41,6 +41,12 @@ export const PipedApi = {
     return fetchApi('/api/piped/streams', { v: id }, { ...options, ttlMs: 60000 });
   },
 
+  async getComments(id, nextpage = null, options = {}) {
+    const params = { v: id };
+    if (nextpage) params.nextpage = nextpage;
+    return fetchApi('/api/piped/comments', params, { ...options, ttlMs: 60000 });
+  },
+
   async getSuggestions(q, options = {}) {
     return fetchApi('/api/piped/suggestions', { q }, { ...options, ttlMs: 60000 });
   },

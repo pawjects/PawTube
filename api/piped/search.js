@@ -65,48 +65,7 @@ module.exports = async function handler(req, res) {
       cached: result.cached
     });
   } catch (err) {
-    console.warn('[API /piped/search] Upstream error, returning fallback:', err.message);
-    const fallbackResults = [
-      {
-        id: 'dQw4w9WgXcQ',
-        url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
-        pawtubeUrl: '#/watch?v=dQw4w9WgXcQ',
-        title: `${q} - Rick Astley - Never Gonna Give You Up`,
-        channel: 'Rick Astley',
-        author: 'Rick Astley',
-        channelId: 'UCuAXFkgsw1L7xaCfnd5JJOw',
-        thumb: 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg',
-        duration: 213,
-        durationFormatted: '3:33',
-        views: 1500000000,
-        viewsFormatted: '1.5B views',
-        type: 'stream'
-      },
-      {
-        id: 'jfKfPfyJRdk',
-        url: 'https://www.youtube.com/watch?v=jfKfPfyJRdk',
-        pawtubeUrl: '#/watch?v=jfKfPfyJRdk',
-        title: `${q} - lofi hip hop radio - beats to relax/study to`,
-        channel: 'Lofi Girl',
-        author: 'Lofi Girl',
-        channelId: 'UCSJ4gkVC6NrvII8umztf0Ow',
-        thumb: 'https://i.ytimg.com/vi/jfKfPfyJRdk/hqdefault.jpg',
-        duration: -1,
-        durationFormatted: 'LIVE',
-        views: 45000,
-        viewsFormatted: '45K watching',
-        isLive: true,
-        type: 'stream'
-      }
-    ];
-
-    sendResponse(res, 200, {
-      items: fallbackResults,
-      count: fallbackResults.length,
-      query: q,
-      instance: 'fallback',
-      cached: false,
-      fallback: true
-    });
+    console.warn('[API /piped/search] Upstream error:', err.message);
+    sendError(res, 502, 'SEARCH_FETCH_FAILED', err.message);
   }
 };

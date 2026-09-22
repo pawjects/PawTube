@@ -14,14 +14,66 @@ import { escapeHtml } from '../../utils/dom.js';
 const CATEGORIES = ['All', 'Following', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
 let activeCategory = 'All';
 let homeRenderSeq = 0;
+let homeAbortController = null;
+let userActivityDirty = false;
+
+// Listen to local user activity to mark feed as needing re-ranking
+if (typeof window !== 'undefined') {
+  window.addEventListener('pawtube:historyChange', () => { userActivityDirty = true; });
+  window.addEventListener('pawtube:likeChange', () => { userActivityDirty = true; });
+  window.addEventListener('pawtube:subChange', () => { userActivityDirty = true; });
+}
 
 // Client-side cache to enable immediate rendering without flickering
 const feedCache = new Map();
-const CACHE_TTL_MS = 180000; // 3 minutes
+const CACHE_TTL_MS = 120000; // 2 minutes
+
+/**
+ * Filter out all Shorts and Live content strictly at data processing layer
+ */
+export function filterHomeFeedItems(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => {
+    if (!item || !item.id) return false;
+
+    // 1. Filter out YouTube Shorts
+    if (item.isShort === true) return false;
+    if (item.type === 'short' || item.type === 'shorts') return false;
+    if (item.url && item.url.includes('/shorts/')) return false;
+    if (item.pawtubeUrl && item.pawtubeUrl.includes('/shorts/')) return false;
+    if (typeof item.duration === 'number' && item.duration > 0 && item.duration <= 75) {
+      return false;
+    }
+    const titleLower = (item.title || '').toLowerCase();
+    if (titleLower.includes('#shorts') || titleLower.includes('#short')) {
+      return false;
+    }
+
+    // 2. Filter out Live streams / broadcasts / premieres
+    if (item.isLive === true) return false;
+    if (item.liveNow === true) return false;
+    if (item.type === 'live' || item.type === 'livestream' || item.type === 'live_stream') return false;
+    if (typeof item.duration === 'number' && item.duration < 0) return false;
+    const durStr = String(item.durationFormatted || '').toUpperCase();
+    if (durStr === 'LIVE' || durStr.includes('LIVE')) return false;
+    if (item.badges && Array.isArray(item.badges) && item.badges.some((b) => String(b).toUpperCase().includes('LIVE'))) {
+      return false;
+    }
+
+    return true;
+  });
+}
 
 export async function renderHomePage(container, options = {}) {
   const { forceRefresh = false } = options;
   const currentSeq = ++homeRenderSeq;
+
+  // Cancel any in-flight home requests
+  if (homeAbortController) {
+    homeAbortController.abort();
+  }
+  homeAbortController = new AbortController();
+  const signal = homeAbortController.signal;
 
   const prefs = getPreferences();
   const history = getHistory();
@@ -29,10 +81,16 @@ export async function renderHomePage(container, options = {}) {
   const followedChannels = getFollowedChannels();
   const currentRegion = (prefs.region || 'IN').toUpperCase();
 
-  // Check cached feed for immediate zero-flicker render
+  // Check cached feed
   const cachedEntry = feedCache.get(activeCategory);
   const hasValidCache = cachedEntry && Array.isArray(cachedEntry.items) && cachedEntry.items.length > 0;
-  const isCacheFresh = hasValidCache && Date.now() - cachedEntry.timestamp < CACHE_TTL_MS;
+  const isCacheFresh = hasValidCache && !forceRefresh && (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS);
+
+  let initialRenderItems = [];
+  if (hasValidCache) {
+    const filteredCached = filterHomeFeedItems(cachedEntry.items);
+    initialRenderItems = rankFeedItems(filteredCached);
+  }
 
   let html = `
     <div class="category-bar">
@@ -41,7 +99,7 @@ export async function renderHomePage(container, options = {}) {
           ${escapeHtml(cat)}
         </button>
       `).join('')}
-      <button class="category-chip refresh-chip" id="feed-refresh-btn" title="Refresh feed" style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+      <button class="category-chip refresh-chip" id="feed-refresh-btn" title="Refresh feed" aria-label="Refresh feed" style="margin-left:auto;display:flex;align-items:center;gap:4px;">
         <span class="material-symbols-rounded" style="font-size:16px;">refresh</span>
         <span>Refresh</span>
       </button>
@@ -110,7 +168,7 @@ export async function renderHomePage(container, options = {}) {
       </h2>
     </div>
     <div class="video-grid" id="home-grid">
-      ${hasValidCache ? rankFeedItems(filterShorts(cachedEntry.items, prefs)).map(renderVideoCard).join('') : renderSkeletonCards(8)}
+      ${hasValidCache && !forceRefresh ? initialRenderItems.map(renderVideoCard).join('') : renderSkeletonCards(8)}
     </div>
   `;
 
@@ -119,20 +177,26 @@ export async function renderHomePage(container, options = {}) {
   // Bind category chips
   container.querySelectorAll('.category-chip[data-category]').forEach((chip) => {
     chip.addEventListener('click', () => {
-      activeCategory = chip.getAttribute('data-category');
+      const nextCategory = chip.getAttribute('data-category');
+      if (nextCategory === activeCategory) return;
+      activeCategory = nextCategory;
       renderHomePage(container);
     });
   });
 
   // Bind explicit refresh button
   container.querySelector('#feed-refresh-btn')?.addEventListener('click', () => {
+    const refreshBtn = container.querySelector('#feed-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.classList.add('loading');
+    }
     renderHomePage(container, { forceRefresh: true });
   });
 
   const grid = container.querySelector('#home-grid');
   if (!grid) return;
 
-  // If activeCategory is 'Following' and user has no followed channels
+  // If Following tab with no followed channels
   if (activeCategory === 'Following' && followedChannels.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary); background: var(--bg-surface); border-radius: 18px; border: 1px solid var(--glass-border); margin: 20px 0;">
@@ -149,45 +213,63 @@ export async function renderHomePage(container, options = {}) {
     return;
   }
 
-  // If cache is fresh and forceRefresh was not requested, we're done
-  if (isCacheFresh && !forceRefresh) {
+  // If cache is fresh and no activity change occurred and not forced, we are done
+  if (isCacheFresh && !userActivityDirty && !forceRefresh) {
     return;
+  }
+
+  // If cache exists but user had recent activity, re-rank immediately
+  if (hasValidCache && userActivityDirty && !forceRefresh) {
+    userActivityDirty = false;
+    const reFiltered = filterHomeFeedItems(cachedEntry.items);
+    const reRanked = rankFeedItems(reFiltered);
+    if (grid && currentSeq === homeRenderSeq) {
+      grid.innerHTML = reRanked.map(renderVideoCard).join('');
+    }
+    // Still perform background refresh if near stale
+    if (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS * 0.7) {
+      return;
+    }
   }
 
   // Fetch fresh content asynchronously
   try {
     let result;
     if (activeCategory === 'All') {
-      result = await PipedApi.getTrending(currentRegion);
+      result = await PipedApi.getTrending(currentRegion, { signal });
     } else if (activeCategory === 'Following') {
       const responses = await Promise.allSettled(
-        followedChannels.slice(0, 6).map((f) => PipedApi.getChannel(f.id))
+        followedChannels.slice(0, 6).map((f) => PipedApi.getChannel(f.id, null, { signal }))
       );
       const combined = [];
       responses.forEach((res) => {
-        if (res.status === 'fulfilled' && res.value?.items) {
-          combined.push(...res.value.items.filter((i) => i.type !== 'channel'));
+        if (res.status === 'fulfilled') {
+          const list = res.value?.videos || res.value?.items || [];
+          combined.push(...list.filter((i) => i.type !== 'channel'));
         }
       });
       result = { items: combined };
     } else {
-      result = await PipedApi.search(activeCategory, 'all');
+      result = await PipedApi.search(activeCategory, 'all', { signal });
     }
 
-    if (currentSeq !== homeRenderSeq) return;
+    if (currentSeq !== homeRenderSeq || signal.aborted) return;
 
     let items = result?.items || [];
     
+    // 1. Filter out all Shorts and live broadcasts strictly at data processing layer
+    const filteredItems = filterHomeFeedItems(items);
+
     // Save to local feed cache if items were returned
-    if (items.length > 0) {
+    if (filteredItems.length > 0) {
       feedCache.set(activeCategory, {
-        items,
+        items: filteredItems,
         timestamp: Date.now()
       });
+      userActivityDirty = false;
     }
 
-    // Apply filters and personalization
-    const filteredItems = filterShorts(items, prefs);
+    // 2. Personalize and re-rank with local signals
     const personalizedItems = rankFeedItems(filteredItems);
 
     if (grid && currentSeq === homeRenderSeq) {
@@ -204,7 +286,7 @@ export async function renderHomePage(container, options = {}) {
       }
     }
   } catch (err) {
-    if (currentSeq !== homeRenderSeq || isAbortError(err)) return;
+    if (currentSeq !== homeRenderSeq || isAbortError(err) || signal.aborted) return;
     const msg = String(err?.message || err || '').toLowerCase();
     if (msg.includes('abort') || msg.includes('signal') || msg.includes('cancel')) return;
 
@@ -212,19 +294,14 @@ export async function renderHomePage(container, options = {}) {
     if (currentSeq === homeRenderSeq && grid) {
       if (hasValidCache) {
         // Fall back to stale cache if network failed
-        grid.innerHTML = rankFeedItems(filterShorts(cachedEntry.items, prefs)).map(renderVideoCard).join('');
+        const fallbackItems = rankFeedItems(filterHomeFeedItems(cachedEntry.items));
+        grid.innerHTML = fallbackItems.map(renderVideoCard).join('');
       } else {
         grid.innerHTML = renderErrorState('Unable to load feed', 'Could not reach Piped instances. Tap retry to reconnect.', 'window.pawtubeRetryHomeFeed');
         window.pawtubeRetryHomeFeed = () => renderHomePage(container, { forceRefresh: true });
       }
     }
   }
-}
-
-function filterShorts(items, prefs) {
-  if (!Array.isArray(items)) return [];
-  if (!prefs.hideShorts) return items;
-  return items.filter((item) => !item.isShort && !(item.duration && item.duration <= 60 && item.duration > 0));
 }
 
 export default renderHomePage;
