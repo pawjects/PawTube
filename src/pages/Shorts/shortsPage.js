@@ -22,7 +22,7 @@ export async function renderShortsPage(container) {
     currentShorts = (res.items || []).filter((i) => i.id);
 
     if (currentShorts.length === 0) {
-      const trendRes = await PipedApi.getTrending('US');
+      const trendRes = await PipedApi.getTrending('IN');
       currentShorts = (trendRes.items || []).filter((i) => i.id);
     }
 

@@ -5,6 +5,7 @@
  */
 
 import { extractVideoId } from '../../player/videoId.js';
+import { playerController } from '../../player/player.js';
 import { renderHomePage } from '../../pages/Home/homePage.js';
 import { renderShortsPage } from '../../pages/Shorts/shortsPage.js';
 import { renderLibraryPage } from '../../pages/Library/libraryPage.js';
@@ -66,11 +67,21 @@ export class Router {
   handleRoute() {
     const loc = this.parseLocation();
     const path = loc.path.toLowerCase();
+    const previousRoute = this.currentRoute;
     this.currentRoute = path;
 
     // Check direct video playback in any route format
     const possibleVideoId = extractVideoId(window.location.href);
-    if (path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you'].includes(path))) {
+    const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you'].includes(path));
+
+    // Handle mini-player transitions
+    if (previousRoute && previousRoute.includes('watch') && !isNavigatingToWatch) {
+      playerController.onNavigateAwayFromWatch();
+    } else if (isNavigatingToWatch) {
+      playerController.hideMiniPlayer();
+    }
+
+    if (isNavigatingToWatch) {
       const videoId = loc.videoId || loc.params.get('v') || possibleVideoId;
       this.updateNavigationUI('/watch');
       renderWatchPage(this.mount, videoId);

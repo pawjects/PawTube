@@ -5,7 +5,7 @@
  */
 
 import { extractVideoId } from '../../player/videoId.js';
-import { buildNoCookieEmbedUrl } from '../../player/embed.js';
+import { playerController } from '../../player/player.js';
 import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
 import { renderVideoCard } from '../../components/video/videoCard.js';
@@ -34,33 +34,12 @@ export async function renderWatchPage(container, videoIdInput) {
     return;
   }
 
-  // 1. Immediately render the No-Cookie player embed without waiting for Piped
-  const embedUrl = buildNoCookieEmbedUrl(cleanId, {
-    autoplay: 1,
-    playsinline: 1,
-    controls: 1
-  });
-
-  // Record initial watch history
-  addToHistory({
-    id: cleanId,
-    title: 'YouTube Video',
-    thumb: `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`
-  });
-
   container.innerHTML = `
     <div class="watch-layout" style="display:flex;gap:24px;max-width:1440px;margin:0 auto;padding-bottom:60px;">
       <!-- Left Column: Player & Metadata -->
       <div class="watch-main-col" style="flex:1;min-width:0;">
-        <!-- Player Container -->
-        <div class="player-container" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:16px;overflow:hidden;box-shadow:var(--shadow-glass);">
-          <iframe 
-            src="${embedUrl}" 
-            title="YouTube Video Player"
-            style="width:100%;height:100%;border:none;"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowfullscreen>
-          </iframe>
+        <!-- Player Container with Virtual Controls -->
+        <div class="player-container" id="watch-player-slot" style="position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:16px;overflow:hidden;box-shadow:var(--shadow-glass);">
         </div>
 
         <!-- Video Info Header (Updated asynchronously) -->
@@ -140,10 +119,19 @@ export async function renderWatchPage(container, videoIdInput) {
     }
   });
 
+  // Mount the Virtual Player Controls immediately (No-Cookie Embed)
+  const playerSlot = container.querySelector('#watch-player-slot');
+  if (playerSlot) {
+    playerController.mountPlayer(playerSlot, cleanId);
+  }
+
   // 2. Asynchronously fetch video metadata from Piped
   try {
     const videoData = await PipedApi.getVideo(cleanId);
     if (currentSeq !== watchRenderSeq) return;
+
+    // Update player controller with rich metadata
+    playerController.updateMetadata(videoData);
 
     // Update title
     const titleEl = container.querySelector('#video-title');

@@ -1,82 +1,24 @@
 /**
  * PawTube - Home Page
+ * India-focused content discovery with local personalization ranking & intelligent cache refreshing.
  */
 
 import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
-import { renderVideoCard, renderSkeletonCards, renderErrorState } from '../../components/video/videoCard.js';
+import { renderVideoCard, renderSkeletonCards } from '../../components/video/videoCard.js';
 import { getHistory } from '../../storage/history/historyStorage.js';
+import { rankFeedItems } from '../../storage/personalization/personalizationEngine.js';
 import { escapeHtml } from '../../utils/dom.js';
 
 const CATEGORIES = ['All', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
 let activeCategory = 'All';
 let homeRenderSeq = 0;
 
-export async function renderHomePage(container) {
-  const currentSeq = ++homeRenderSeq;
+// Client-side cache to enable immediate rendering without flickering
+const feedCache = new Map();
+const CACHE_TTL_MS = 180000; // 3 minutes
 
-  const history = getHistory();
-  const continueWatching = history.slice(0, 4);
-
-  let html = `
-    <div class="category-bar">
-      ${CATEGORIES.map((cat) => `
-        <button class="category-chip ${cat === activeCategory ? 'active' : ''}" data-category="${escapeHtml(cat)}">
-          ${escapeHtml(cat)}
-        </button>
-      `).join('')}
-    </div>
-  `;
-
-  if (continueWatching.length > 0 && activeCategory === 'All') {
-    html += `
-      <div class="section-header">
-        <h2 class="section-title">
-          <span class="material-symbols-rounded">history</span>
-          Continue Watching
-        </h2>
-      </div>
-      <div class="continue-watching-rail">
-        ${continueWatching.map((v) => `
-          <div class="continue-card" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
-            <div class="continue-thumb-wrap">
-              <img src="${escapeHtml(v.thumb || '')}" alt="${escapeHtml(v.title)}" loading="lazy" />
-              <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
-            </div>
-            <div class="card-title" style="font-size:13.5px;margin-top:6px;">${escapeHtml(v.title)}</div>
-            <div class="card-channel" style="font-size:12px;">${escapeHtml(v.channel || v.author || '')}</div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-  }
-
-  html += `
-    <div class="section-header">
-      <h2 class="section-title">
-        <span class="material-symbols-rounded">${activeCategory === 'All' ? 'auto_awesome' : 'local_fire_department'}</span>
-        ${activeCategory === 'All' ? 'Recommended for You' : escapeHtml(activeCategory)}
-      </h2>
-    </div>
-    <div class="video-grid" id="home-grid">
-      ${renderSkeletonCards(8)}
-    </div>
-  `;
-
-  container.innerHTML = html;
-
-  // Bind category chips
-  container.querySelectorAll('.category-chip').forEach((chip) => {
-    chip.addEventListener('click', () => {
-      activeCategory = chip.getAttribute('data-category');
-      renderHomePage(container);
-    });
-  });
-
-  const grid = container.querySelector('#home-grid');
-  if (!grid) return;
-
-const FALLBACK_VIDEOS = [
+const INDIAN_CURATED_VIDEOS = [
   {
     id: 'dQw4w9WgXcQ',
     title: 'Rick Astley - Never Gonna Give You Up (Official Music Video)',
@@ -158,23 +100,120 @@ const FALLBACK_VIDEOS = [
   }
 ];
 
+export async function renderHomePage(container, options = {}) {
+  const { forceRefresh = false } = options;
+  const currentSeq = ++homeRenderSeq;
+
+  const history = getHistory();
+  const continueWatching = history.slice(0, 4);
+
+  // Check cached feed for immediate zero-flicker render
+  const cachedEntry = feedCache.get(activeCategory);
+  const hasValidCache = cachedEntry && Array.isArray(cachedEntry.items) && cachedEntry.items.length > 0;
+  const isCacheFresh = hasValidCache && Date.now() - cachedEntry.timestamp < CACHE_TTL_MS;
+
+  let html = `
+    <div class="category-bar">
+      ${CATEGORIES.map((cat) => `
+        <button class="category-chip ${cat === activeCategory ? 'active' : ''}" data-category="${escapeHtml(cat)}">
+          ${escapeHtml(cat)}
+        </button>
+      `).join('')}
+      <button class="category-chip refresh-chip" id="feed-refresh-btn" title="Refresh feed" style="margin-left:auto;display:flex;align-items:center;gap:4px;">
+        <span class="material-symbols-rounded" style="font-size:16px;">refresh</span>
+        <span>Refresh</span>
+      </button>
+    </div>
+  `;
+
+  if (continueWatching.length > 0 && activeCategory === 'All') {
+    html += `
+      <div class="section-header">
+        <h2 class="section-title">
+          <span class="material-symbols-rounded">history</span>
+          Continue Watching
+        </h2>
+      </div>
+      <div class="continue-watching-rail">
+        ${continueWatching.map((v) => `
+          <div class="continue-card" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
+            <div class="continue-thumb-wrap">
+              <img src="${escapeHtml(v.thumb || '')}" alt="${escapeHtml(v.title)}" loading="lazy" />
+              <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
+            </div>
+            <div class="card-title" style="font-size:13.5px;margin-top:6px;">${escapeHtml(v.title)}</div>
+            <div class="card-channel" style="font-size:12px;">${escapeHtml(v.channel || v.author || '')}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  html += `
+    <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;">
+      <h2 class="section-title">
+        <span class="material-symbols-rounded">${activeCategory === 'All' ? 'auto_awesome' : 'local_fire_department'}</span>
+        ${activeCategory === 'All' ? 'Trending in India' : escapeHtml(activeCategory)}
+      </h2>
+    </div>
+    <div class="video-grid" id="home-grid">
+      ${hasValidCache ? rankFeedItems(cachedEntry.items).map(renderVideoCard).join('') : renderSkeletonCards(8)}
+    </div>
+  `;
+
+  container.innerHTML = html;
+
+  // Bind category chips
+  container.querySelectorAll('.category-chip[data-category]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      activeCategory = chip.getAttribute('data-category');
+      renderHomePage(container);
+    });
+  });
+
+  // Bind explicit refresh button
+  container.querySelector('#feed-refresh-btn')?.addEventListener('click', () => {
+    renderHomePage(container, { forceRefresh: true });
+  });
+
+  const grid = container.querySelector('#home-grid');
+  if (!grid) return;
+
+  // If cache is fresh and forceRefresh was not requested, we're done
+  if (isCacheFresh && !forceRefresh) {
+    return;
+  }
+
+  // Fetch fresh content asynchronously
   try {
     let result;
     if (activeCategory === 'All') {
-      result = await PipedApi.getTrending('US');
+      // Default discovery to India region 'IN'
+      result = await PipedApi.getTrending('IN');
     } else {
       result = await PipedApi.search(activeCategory, 'all');
     }
 
     if (currentSeq !== homeRenderSeq) return;
 
-    const items = result?.items || [];
+    let items = result?.items || [];
     if (items.length === 0) {
-      grid.innerHTML = FALLBACK_VIDEOS.map(renderVideoCard).join('');
-      return;
+      items = INDIAN_CURATED_VIDEOS;
     }
 
-    grid.innerHTML = items.map(renderVideoCard).join('');
+    // Save to local feed cache
+    feedCache.set(activeCategory, {
+      items,
+      timestamp: Date.now()
+    });
+
+    // Run Personalized Feed Ranking Pipeline:
+    // Piped India content -> local relevance scoring -> deduplication -> render
+    const personalizedItems = rankFeedItems(items);
+
+    if (grid && currentSeq === homeRenderSeq) {
+      grid.innerHTML = personalizedItems.map(renderVideoCard).join('');
+    }
   } catch (err) {
     if (currentSeq !== homeRenderSeq || isAbortError(err)) return;
     const msg = String(err?.message || err || '').toLowerCase();
@@ -182,7 +221,8 @@ const FALLBACK_VIDEOS = [
 
     console.warn('Home feed network unavailable, loading curated fallback:', err?.message || err);
     if (currentSeq === homeRenderSeq && grid) {
-      grid.innerHTML = FALLBACK_VIDEOS.map(renderVideoCard).join('');
+      const fallbackRanked = rankFeedItems(INDIAN_CURATED_VIDEOS);
+      grid.innerHTML = fallbackRanked.map(renderVideoCard).join('');
     }
   }
 }

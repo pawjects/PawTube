@@ -11,7 +11,7 @@ module.exports = async function handler(req, res) {
   }
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const region = url.searchParams.get('region') || 'US';
+  const region = url.searchParams.get('region') || 'IN';
   const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
 
   try {

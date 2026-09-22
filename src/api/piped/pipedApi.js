@@ -7,14 +7,14 @@ import { fetchApi } from '../client/apiClient.js';
 import { normalizeMediaItem } from '../normalization/mediaModels.js';
 
 export const PipedApi = {
-  async getTrending(region = 'US', options = {}) {
+  async getTrending(region = 'IN', options = {}) {
     const res = await fetchApi('/api/piped/trending', { region }, { ...options, ttlMs: 60000 });
     const items = (res.items || []).map(normalizeMediaItem).filter(Boolean);
     return { ...res, items };
   },
 
   async search(q, filter = 'all', options = {}) {
-    const res = await fetchApi('/api/piped/search', { q, filter }, { ...options, ttlMs: 30000 });
+    const res = await fetchApi('/api/piped/search', { q, filter, region: 'IN' }, { ...options, ttlMs: 30000 });
     const items = (res.items || []).map((i) => (i.type === 'video' ? normalizeMediaItem(i) : i)).filter(Boolean);
     return { ...res, items };
   },
