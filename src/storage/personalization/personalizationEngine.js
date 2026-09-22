@@ -55,10 +55,12 @@ export function buildUserProfile() {
   const channelWeights = new Map();
   const keywordWeights = new Map();
 
-  // 1. Process Channel Subscriptions (strong positive signal)
+  // 1. Process Channel Subscriptions / Follows (strongest positive signal)
   subs.forEach((s) => {
     const name = (s.name || '').toLowerCase().trim();
-    if (name) channelWeights.set(name, (channelWeights.get(name) || 0) + 15);
+    const id = (s.id || '').toLowerCase().trim();
+    if (name) channelWeights.set(name, (channelWeights.get(name) || 0) + 35);
+    if (id) channelWeights.set(id, (channelWeights.get(id) || 0) + 35);
   });
 
   // 2. Process Saved Playlists
@@ -154,8 +156,11 @@ export function rankFeedItems(rawItems) {
     let relevanceScore = 0;
 
     const ch = (item.channel || item.author || '').toLowerCase().trim();
+    const chId = (item.channelId || item.authorId || (item.uploaderUrl ? item.uploaderUrl.replace(/^\/channel\//, '') : '')).toLowerCase().trim();
     if (ch && profile.channelWeights.has(ch)) {
-      relevanceScore += Math.min(40, profile.channelWeights.get(ch) * 2.5);
+      relevanceScore += Math.min(60, profile.channelWeights.get(ch) * 2.5);
+    } else if (chId && profile.channelWeights.has(chId)) {
+      relevanceScore += Math.min(60, profile.channelWeights.get(chId) * 2.5);
     }
 
     const keywords = extractKeywords(item.title || '');

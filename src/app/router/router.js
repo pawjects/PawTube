@@ -13,6 +13,7 @@ import { renderLibraryPage } from '../../pages/Library/libraryPage.js';
 import { renderYouPage } from '../../pages/You/youPage.js';
 import { renderWatchPage } from '../../pages/Watch/watchPage.js';
 import { renderSearchPage } from '../../pages/Search/searchPage.js';
+import { renderChannelPage } from '../../pages/Channel/channelPage.js';
 
 export class Router {
   constructor(mountElement) {
@@ -32,15 +33,29 @@ export class Router {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
 
-    // If there is a hash route like #/watch?v=... or #/shorts
+    // If there is a hash route like #/watch?v=..., #/channel/..., or #/shorts
     if (hash.startsWith('#')) {
       const hashClean = hash.slice(1);
-      const [path, qs] = hashClean.split('?');
+      const [rawPath, qs] = hashClean.split('?');
       const params = new URLSearchParams(qs || '');
-      return { path: path || '/home', params, raw: hashClean };
+      const path = rawPath || '/home';
+
+      // Check for /channel/:id in hash
+      if (path.startsWith('/channel/')) {
+        const channelId = decodeURIComponent(path.replace(/^\/channel\//, ''));
+        return { path: '/channel', params, channelId, raw: hashClean };
+      }
+
+      return { path, params, raw: hashClean };
     }
 
-    // Direct pathname support (e.g. /watch?v=... or /shorts or /watch/VIDEO_ID)
+    // Direct pathname support (e.g. /watch?v=... or /channel/CHANNEL_ID)
+    if (pathname.startsWith('/channel/')) {
+      const channelId = decodeURIComponent(pathname.replace(/^\/channel\//, ''));
+      const params = new URLSearchParams(search);
+      return { path: '/channel', params, channelId };
+    }
+
     if (pathname.startsWith('/watch')) {
       const parts = pathname.split('/');
       const params = new URLSearchParams(search);
@@ -74,7 +89,7 @@ export class Router {
 
     // Check direct video playback in any route format
     const possibleVideoId = extractVideoId(window.location.href);
-    const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you'].includes(path));
+    const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you', '/channel', '/search'].some(p => path.startsWith(p)));
 
     // Handle mini-player transitions
     if (previousRoute && previousRoute.includes('watch') && !isNavigatingToWatch) {
@@ -87,6 +102,14 @@ export class Router {
       const startTime = parseFloat(rawTime) || 0;
       this.updateNavigationUI('/watch');
       renderWatchPage(this.mount, videoId, startTime);
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    if (path.includes('channel')) {
+      const channelId = loc.channelId || loc.params.get('id') || '';
+      this.updateNavigationUI('/channel');
+      renderChannelPage(this.mount, channelId);
       window.scrollTo(0, 0);
       return;
     }

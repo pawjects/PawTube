@@ -158,14 +158,14 @@ export function renderYouPage(container) {
           <div style="display:flex;flex-direction:column;gap:10px;max-height:300px;overflow-y:auto;">
             ${subs.map((s) => `
               <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-elevated);border-radius:12px;">
-                <div style="display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="window.location.hash='#/channel?id=${encodeURIComponent(s.id)}'">
+                <div style="display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="window.location.hash='#/channel/${encodeURIComponent(s.id)}'">
                   <div style="width:34px;height:34px;border-radius:50%;background:var(--bg-hover);display:flex;align-items:center;justify-content:center;overflow:hidden;">
                     ${s.avatar ? `<img src="${escapeHtml(s.avatar)}" alt="" style="width:100%;height:100%;object-fit:cover;" />` : '<span class="material-symbols-rounded" style="font-size:20px;">account_circle</span>'}
                   </div>
                   <span style="font-size:14px;font-weight:500;">${escapeHtml(s.name)}</span>
                 </div>
                 <button class="unsub-btn" data-sub-id="${escapeHtml(s.id)}" style="padding:5px 12px;border-radius:8px;background:transparent;border:1px solid var(--glass-border);color:var(--text-secondary);font-size:12px;cursor:pointer;">
-                  Unsubscribe
+                  Unfollow
                 </button>
               </div>
             `).join('')}

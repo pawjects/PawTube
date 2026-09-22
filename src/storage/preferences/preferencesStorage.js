@@ -55,28 +55,45 @@ export function getSubscriptions() {
 
 export function isSubscribed(channelId) {
   if (!channelId) return false;
+  const cleanId = channelId.replace(/^\/channel\//, '');
   const subs = getSubscriptions();
-  return subs.some((s) => s.id === channelId);
+  return subs.some((s) => s.id === cleanId || s.id === channelId);
 }
 
 export function toggleSubscription(channel) {
   if (!channel || (!channel.id && !channel.channelId)) return false;
-  const id = channel.id || channel.channelId;
+  const rawId = channel.id || channel.channelId;
+  const id = rawId.replace(/^\/channel\//, '');
   const subs = getSubscriptions();
-  const index = subs.findIndex((s) => s.id === id);
+  const index = subs.findIndex((s) => s.id === id || s.id === rawId);
 
+  let status = false;
   if (index >= 0) {
     subs.splice(index, 1);
     localStorage.setItem(SUBS_KEY, JSON.stringify(subs));
-    return false; // unsubscribed
+    status = false; // unfollowed
   } else {
     subs.push({
       id,
       name: channel.name || channel.channel || channel.author || 'Channel',
       avatar: channel.avatar || channel.thumb || '',
+      verified: Boolean(channel.verified),
+      subscribers: channel.subscribers || 0,
       subscribedAt: Date.now()
     });
     localStorage.setItem(SUBS_KEY, JSON.stringify(subs));
-    return true; // subscribed
+    status = true; // followed
   }
+
+  try {
+    window.dispatchEvent(new CustomEvent('pawtube:followChange', { detail: { id, followed: status } }));
+  } catch {}
+
+  return status;
 }
+
+// Aliases for clear local "Follow" semantics
+export const getFollowedChannels = getSubscriptions;
+export const isFollowed = isSubscribed;
+export const toggleFollow = toggleSubscription;
+

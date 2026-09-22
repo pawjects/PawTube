@@ -15,7 +15,11 @@ export const PipedApi = {
 
   async search(q, filter = 'all', options = {}) {
     const res = await fetchApi('/api/piped/search', { q, filter, region: 'IN' }, { ...options, ttlMs: 30000 });
-    const items = (res.items || []).map((i) => (i.type === 'video' ? normalizeMediaItem(i) : i)).filter(Boolean);
+    const items = (res.items || []).map((i) => {
+      if (!i) return null;
+      if (i.type === 'channel' || i.type === 'playlist') return i;
+      return normalizeMediaItem(i) || i;
+    }).filter(Boolean);
     return { ...res, items };
   },
 
@@ -23,8 +27,10 @@ export const PipedApi = {
     return fetchApi('/api/piped/video', { v: id }, { ...options, ttlMs: 120000 });
   },
 
-  async getChannel(id, options = {}) {
-    return fetchApi('/api/piped/channel', { id }, { ...options, ttlMs: 120000 });
+  async getChannel(id, nextpage = null, options = {}) {
+    const params = { id };
+    if (nextpage) params.nextpage = nextpage;
+    return fetchApi('/api/piped/channel', params, { ...options, ttlMs: nextpage ? 60000 : 120000 });
   },
 
   async getPlaylist(listId, options = {}) {

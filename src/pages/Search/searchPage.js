@@ -1,13 +1,15 @@
 /**
- * PawTube - Search Results Page with Filters & Responsive Layout
+ * PawTube - Search Results Page with Filters, AbortController & Responsive Layout
  */
 
 import { PipedApi } from '../../api/piped/pipedApi.js';
 import { renderVideoCard, renderSkeletonCards, renderErrorState } from '../../components/video/videoCard.js';
 import { recordSearchQuery } from '../../storage/personalization/personalizationEngine.js';
 import { escapeHtml } from '../../utils/dom.js';
+import { isAbortError } from '../../api/client/apiClient.js';
 
 let searchSeq = 0;
+let currentSearchAbortController = null;
 let currentFilter = 'all';
 
 const FILTERS = [
@@ -24,8 +26,27 @@ export async function renderSearchPage(container, query) {
     return;
   }
 
-  recordSearchQuery(cleanQuery);
+  // Cancel any in-flight search request so previous results never overwrite newer ones
+  if (currentSearchAbortController) {
+    currentSearchAbortController.abort();
+    currentSearchAbortController = null;
+  }
+  currentSearchAbortController = new AbortController();
+  const signal = currentSearchAbortController.signal;
   const currentSeq = ++searchSeq;
+
+  // Record for local search history
+  recordSearchQuery(cleanQuery);
+
+  // Sync header search input value and clear button
+  const headerSearchInput = document.getElementById('header-search');
+  if (headerSearchInput && headerSearchInput.value !== cleanQuery) {
+    headerSearchInput.value = cleanQuery;
+  }
+  const clearBtn = document.getElementById('search-clear-btn');
+  if (clearBtn) {
+    clearBtn.style.display = cleanQuery ? 'flex' : 'none';
+  }
 
   container.innerHTML = `
     <div style="max-width:1200px;margin:0 auto;padding-bottom:60px;">
@@ -40,7 +61,7 @@ export async function renderSearchPage(container, query) {
       <!-- Search Filter Chips -->
       <div class="category-bar" style="margin-bottom:20px;">
         ${FILTERS.map((f) => `
-          <button class="category-chip ${f.id === currentFilter ? 'active' : ''}" data-filter="${f.id}">
+          <button type="button" class="category-chip ${f.id === currentFilter ? 'active' : ''}" data-filter="${f.id}" aria-label="Filter by ${escapeHtml(f.label)}">
             ${escapeHtml(f.label)}
           </button>
         `).join('')}
@@ -53,10 +74,10 @@ export async function renderSearchPage(container, query) {
     </div>
   `;
 
-  // Bind filter buttons
+  // Bind filter chips
   container.querySelectorAll('.category-chip[data-filter]').forEach((chip) => {
     chip.addEventListener('click', () => {
-      currentFilter = chip.getAttribute('data-filter');
+      currentFilter = chip.getAttribute('data-filter') || 'all';
       renderSearchPage(container, cleanQuery);
     });
   });
@@ -65,7 +86,7 @@ export async function renderSearchPage(container, query) {
   if (!grid) return;
 
   try {
-    const res = await PipedApi.search(cleanQuery, currentFilter);
+    const res = await PipedApi.search(cleanQuery, currentFilter, { signal });
     if (currentSeq !== searchSeq) return;
 
     const items = res?.items || [];
@@ -83,14 +104,33 @@ export async function renderSearchPage(container, query) {
 
     grid.innerHTML = items.map((item) => {
       if (item.type === 'channel') {
+        const rawId = item.id || item.channelId || (item.url ? item.url.replace(/^\/channel\//, '') : '') || item.name || '';
+        const channelId = String(rawId).replace(/^\/channel\//, '').trim();
+        const channelName = item.title || item.name || item.channel || 'Channel';
+        const avatarUrl = item.avatar || item.thumb || item.thumbnail || '';
+        let subText = 'Channel';
+        if (item.subscribers) {
+          const s = item.subscribers;
+          subText = s >= 1000000 ? `${(s/1000000).toFixed(1)}M subscribers` : s >= 1000 ? `${(s/1000).toFixed(1)}K subscribers` : `${s} subscribers`;
+        } else if (item.viewsFormatted) {
+          subText = item.viewsFormatted;
+        }
+
         return `
-          <div class="channel-card" style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;" onclick="window.location.hash='#/channel?id=${encodeURIComponent(item.id || item.channelId)}'">
-            <img src="${escapeHtml(item.avatar || item.thumb || '')}" alt="" style="width:56px;height:56px;border-radius:50%;object-fit:cover;background:var(--bg-elevated);" onerror="this.style.display='none'" />
-            <div style="flex:1;">
-              <h3 style="font-size:16px;font-weight:600;">${escapeHtml(item.title || item.name || item.channel)}</h3>
-              <p style="font-size:13px;color:var(--text-secondary);">${escapeHtml(item.viewsFormatted || 'Channel')}</p>
+          <div class="channel-card" style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;transition:transform 0.15s, background 0.15s;" 
+            onclick="window.location.hash='#/channel/${encodeURIComponent(channelId)}'">
+            <img src="${escapeHtml(avatarUrl)}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--bg-elevated);border:2px solid var(--glass-border);" onerror="this.src='/public/assets/pawtube_logo.png';" />
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <h3 style="font-size:16px;font-weight:600;margin:0;color:var(--text-primary);">${escapeHtml(channelName)}</h3>
+                ${item.verified ? `<span class="material-symbols-rounded" style="font-size:16px;color:var(--brand-blue);" title="Verified">check_circle</span>` : ''}
+              </div>
+              <p style="font-size:13px;color:var(--text-secondary);margin:4px 0 0;">${escapeHtml(subText)}</p>
+              ${item.description ? `<p style="font-size:12px;color:var(--text-tertiary);margin:4px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.description)}</p>` : ''}
             </div>
-            <button style="padding:6px 16px;border-radius:999px;background:var(--text-primary);color:var(--bg-primary);border:none;font-weight:600;font-size:13px;">View</button>
+            <button type="button" style="padding:8px 20px;border-radius:999px;background:var(--text-primary);color:var(--bg-primary);border:none;font-weight:600;font-size:13px;cursor:pointer;flex-shrink:0;">
+              View Channel
+            </button>
           </div>
         `;
       }
@@ -114,8 +154,9 @@ export async function renderSearchPage(container, query) {
     }).join('');
   } catch (err) {
     if (currentSeq !== searchSeq) return;
+    if (isAbortError(err)) return; // Silently ignore aborted requests
     console.error('Search error:', err);
-    grid.innerHTML = renderErrorState('Search failed', err.message, 'window.pawtubeRetrySearch');
+    grid.innerHTML = renderErrorState('Search failed', err.message || 'Unable to retrieve search results.', 'window.pawtubeRetrySearch');
     window.pawtubeRetrySearch = () => renderSearchPage(container, cleanQuery);
   }
 }

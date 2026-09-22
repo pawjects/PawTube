@@ -7,10 +7,11 @@ import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
 import { renderVideoCard, renderSkeletonCards } from '../../components/video/videoCard.js';
 import { getHistory } from '../../storage/history/historyStorage.js';
+import { getFollowedChannels } from '../../storage/preferences/preferencesStorage.js';
 import { rankFeedItems } from '../../storage/personalization/personalizationEngine.js';
 import { escapeHtml } from '../../utils/dom.js';
 
-const CATEGORIES = ['All', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
+const CATEGORIES = ['All', 'Following', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
 let activeCategory = 'All';
 let homeRenderSeq = 0;
 
@@ -106,6 +107,7 @@ export async function renderHomePage(container, options = {}) {
 
   const history = getHistory();
   const continueWatching = history.slice(0, 4);
+  const followedChannels = getFollowedChannels();
 
   // Check cached feed for immediate zero-flicker render
   const cachedEntry = feedCache.get(activeCategory);
@@ -154,11 +156,33 @@ export async function renderHomePage(container, options = {}) {
     `;
   }
 
+  if (followedChannels.length > 0 && activeCategory === 'All') {
+    html += `
+      <div class="section-header" style="margin-top:14px;">
+        <h2 class="section-title">
+          <span class="material-symbols-rounded" style="color:var(--brand-blue);">subscriptions</span>
+          From Your Subscriptions
+        </h2>
+      </div>
+      <div class="followed-home-rail" style="display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;margin-bottom:18px;scrollbar-width:none;">
+        ${followedChannels.map((f) => `
+          <div class="followed-pill-item" style="display:flex;align-items:center;gap:8px;padding:6px 14px 6px 6px;border-radius:999px;background:var(--bg-surface);border:1px solid var(--glass-border);cursor:pointer;flex-shrink:0;transition:transform 0.15s, background 0.15s;"
+            onclick="window.location.hash='#/channel/${encodeURIComponent(f.id)}'">
+            <div style="width:28px;height:28px;border-radius:50%;overflow:hidden;background:var(--bg-elevated);flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+              ${f.avatar ? `<img src="${escapeHtml(f.avatar)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />` : `<span class="material-symbols-rounded" style="font-size:16px;">person</span>`}
+            </div>
+            <span style="font-size:13px;font-weight:500;color:var(--text-primary);max-width:130px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(f.name)}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
   html += `
     <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;">
       <h2 class="section-title">
-        <span class="material-symbols-rounded">${activeCategory === 'All' ? 'auto_awesome' : 'local_fire_department'}</span>
-        ${activeCategory === 'All' ? 'Trending in India' : escapeHtml(activeCategory)}
+        <span class="material-symbols-rounded">${activeCategory === 'All' ? 'auto_awesome' : (activeCategory === 'Following' ? 'subscriptions' : 'local_fire_department')}</span>
+        ${activeCategory === 'All' ? 'Trending in India' : (activeCategory === 'Following' ? 'Latest from Followed Channels' : escapeHtml(activeCategory))}
       </h2>
     </div>
     <div class="video-grid" id="home-grid">
@@ -184,6 +208,23 @@ export async function renderHomePage(container, options = {}) {
   const grid = container.querySelector('#home-grid');
   if (!grid) return;
 
+  // If activeCategory is 'Following' and user has no followed channels
+  if (activeCategory === 'Following' && followedChannels.length === 0) {
+    grid.innerHTML = `
+      <div style="grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--text-secondary); background: var(--bg-surface); border-radius: 18px; border: 1px solid var(--glass-border); margin: 20px 0;">
+        <span class="material-symbols-rounded" style="font-size: 52px; color: var(--text-tertiary); margin-bottom: 12px; display: inline-block;">subscriptions</span>
+        <h3 style="font-size: 19px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">No Followed Channels Yet</h3>
+        <p style="font-size: 14px; max-width: 440px; margin: 0 auto 20px; line-height: 1.5;">Follow channels and creators to see their latest uploads aggregated here without requiring a YouTube or Google account.</p>
+        <button id="explore-trending-btn" style="padding: 10px 24px; border-radius: 999px; background: var(--text-primary); color: var(--bg-primary); border: none; font-size: 14px; font-weight: 600; cursor: pointer;">Explore Trending</button>
+      </div>
+    `;
+    container.querySelector('#explore-trending-btn')?.addEventListener('click', () => {
+      activeCategory = 'All';
+      renderHomePage(container);
+    });
+    return;
+  }
+
   // If cache is fresh and forceRefresh was not requested, we're done
   if (isCacheFresh && !forceRefresh) {
     return;
@@ -195,6 +236,18 @@ export async function renderHomePage(container, options = {}) {
     if (activeCategory === 'All') {
       // Default discovery to India region 'IN'
       result = await PipedApi.getTrending('IN');
+    } else if (activeCategory === 'Following') {
+      // Aggregate recent videos from top followed channels
+      const responses = await Promise.allSettled(
+        followedChannels.slice(0, 5).map((f) => PipedApi.getChannel(f.id))
+      );
+      const combined = [];
+      responses.forEach((res) => {
+        if (res.status === 'fulfilled' && res.value?.items) {
+          combined.push(...res.value.items.filter((i) => i.type !== 'channel'));
+        }
+      });
+      result = { items: combined.length > 0 ? combined : INDIAN_CURATED_VIDEOS };
     } else {
       result = await PipedApi.search(activeCategory, 'all');
     }

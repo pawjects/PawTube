@@ -4,8 +4,10 @@
  */
 
 const DEFAULT_INSTANCES = [
-  'https://api.piped.private.coffee',
-  'https://pipedapi.ducks.party'
+  'https://pipedapi.ducks.party',
+  'https://api.piped.privacydev.net',
+  'https://piped-api.lunar.icu',
+  'https://api.piped.private.coffee'
 ];
 
 // In-memory cache for serverless execution reuse

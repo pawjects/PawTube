@@ -75,3 +75,10 @@ export function removeFromPlaylist(playlistId, videoId) {
   pl.items = pl.items.filter((i) => i.id !== videoId);
   savePlaylists(list);
 }
+
+export function isVideoInPlaylist(playlistId, videoId) {
+  if (!playlistId || !videoId) return false;
+  const list = getPlaylists();
+  const pl = list.find((p) => p.id === playlistId);
+  return !!pl && (pl.items || []).some((i) => i.id === videoId);
+}

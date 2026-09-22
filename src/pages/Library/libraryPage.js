@@ -4,6 +4,7 @@
 
 import { getHistory, clearHistory, removeFromHistory } from '../../storage/history/historyStorage.js';
 import { getPlaylists, createPlaylist, deletePlaylist } from '../../storage/playlists/playlistStorage.js';
+import { getFollowedChannels } from '../../storage/preferences/preferencesStorage.js';
 import { renderVideoCard } from '../../components/video/videoCard.js';
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
@@ -11,9 +12,38 @@ import { escapeHtml } from '../../utils/dom.js';
 export function renderLibraryPage(container) {
   const history = getHistory();
   const playlists = getPlaylists();
+  const followed = getFollowedChannels();
 
   container.innerHTML = `
     <div class="library-container" style="max-width:1200px;margin:0 auto;padding-bottom:60px;">
+      <!-- Followed Channels Section -->
+      <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 class="section-title" style="display:flex;align-items:center;gap:8px;font-size:20px;font-weight:700;">
+          <span class="material-symbols-rounded">subscriptions</span>
+          Followed Channels (${followed.length})
+        </h2>
+      </div>
+
+      ${followed.length > 0 ? `
+        <div class="followed-rail" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:12px;margin-bottom:36px;scrollbar-width:none;">
+          ${followed.map((f) => `
+            <div class="followed-card" style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px;min-width:96px;max-width:110px;background:var(--bg-surface);border-radius:14px;border:1px solid var(--glass-border);cursor:pointer;text-align:center;transition:transform 0.15s;" 
+              onclick="window.location.hash='#/channel/${encodeURIComponent(f.id)}'">
+              <div style="width:52px;height:52px;border-radius:50%;overflow:hidden;background:var(--bg-elevated);border:2px solid var(--glass-border);display:flex;align-items:center;justify-content:center;">
+                ${f.avatar ? `<img src="${escapeHtml(f.avatar)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />` : `<span class="material-symbols-rounded" style="color:var(--text-secondary);">person</span>`}
+              </div>
+              <span style="font-size:12px;font-weight:500;color:var(--text-primary);width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(f.name)}">
+                ${escapeHtml(f.name)}
+              </span>
+            </div>
+          `).join('')}
+        </div>
+      ` : `
+        <div style="padding:20px;text-align:center;color:var(--text-secondary);background:var(--bg-surface);border-radius:14px;border:1px solid var(--glass-border-light);margin-bottom:36px;">
+          <p style="font-size:13px;margin:0;">No followed channels yet. Follow creators you like to quickly access them here.</p>
+        </div>
+      `}
+
       <!-- History Section -->
       <div class="section-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <h2 class="section-title" style="display:flex;align-items:center;gap:8px;font-size:20px;font-weight:700;">

@@ -35,26 +35,26 @@
       </div>
 
       <div class="header-center" id="header-center">
-        <button class="icon-btn mobile-search-back" id="mobile-search-back" aria-label="Close search">
+        <button type="button" class="icon-btn mobile-search-back" id="mobile-search-back" aria-label="Close search" tabindex="0">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
-        <form class="search-bar" id="search-form" action="javascript:void(0);">
+        <form class="search-bar" id="search-form" action="javascript:void(0);" role="search">
           <div class="search-input-wrapper">
-            <span class="material-symbols-rounded search-icon-hidden">search</span>
-            <input type="search" id="header-search" placeholder="Search videos or paste link" autocomplete="off" spellcheck="false" />
-            <button type="button" class="search-clear-btn" id="search-clear-btn" aria-label="Clear search" style="display:none;">
+            <span class="material-symbols-rounded search-icon-hidden" aria-hidden="true">search</span>
+            <input type="search" id="header-search" placeholder="Search videos or paste link" autocomplete="off" spellcheck="false" aria-label="Search" />
+            <button type="button" class="search-clear-btn" id="search-clear-btn" aria-label="Clear search" style="display:none;" tabindex="0">
               <span class="material-symbols-rounded">close</span>
             </button>
           </div>
-          <button type="submit" class="search-btn" id="search-btn" aria-label="Search">
+          <button type="submit" class="search-btn" id="search-btn" aria-label="Search" tabindex="0">
             <span class="material-symbols-rounded">search</span>
           </button>
         </form>
-        <div class="search-suggestions-dropdown" id="search-suggestions-dropdown"></div>
+        <div class="search-suggestions-dropdown" id="search-suggestions-dropdown" role="listbox" aria-label="Search suggestions"></div>
       </div>
 
       <div class="header-right">
-        <button class="icon-btn mobile-search-trigger" id="mobile-search-trigger" aria-label="Open search">
+        <button type="button" class="icon-btn mobile-search-trigger" id="mobile-search-trigger" aria-label="Open search" tabindex="0">
           <span class="material-symbols-rounded">search</span>
         </button>
       </div>
@@ -172,16 +172,6 @@
                   <span class="material-symbols-rounded" id="icon-play-pause">pause</span>
                 </button>
 
-                <!-- Rewind 10s -->
-                <button class="player-btn" id="btn-replay-10" title="Rewind 10s (J)" aria-label="Rewind 10 seconds">
-                  <span class="material-symbols-rounded">replay_10</span>
-                </button>
-
-                <!-- Forward 10s -->
-                <button class="player-btn" id="btn-forward-10" title="Skip 10s (L)" aria-label="Skip forward 10 seconds">
-                  <span class="material-symbols-rounded">forward_10</span>
-                </button>
-
                 <!-- Volume Group -->
                 <div class="player-volume-group" id="player-volume-group">
                   <button class="player-btn" id="btn-volume" title="Mute/Unmute (M)" aria-label="Mute or Unmute">
@@ -199,7 +189,7 @@
               <!-- Right Controls -->
               <div class="player-controls-right">
                 <!-- Captions -->
-                <button class="player-btn" id="btn-captions" title="Subtitles/CC" aria-label="Toggle Subtitles">
+                <button class="player-btn" id="btn-captions" title="Subtitles/CC (C)" aria-label="Toggle Subtitles">
                   <span class="material-symbols-rounded" id="icon-captions">closed_caption</span>
                 </button>
 
@@ -217,15 +207,24 @@
                       <span>Speed</span>
                       <span id="speed-label" style="color:var(--brand-blue);font-weight:600;">1x</span>
                     </div>
-                    <div class="player-menu-item" id="menu-quality">
+                    <div class="player-menu-item" id="menu-quality" title="Managed automatically by YouTube embed">
                       <span>Quality</span>
                       <span style="color:var(--text-secondary);font-size:12px;">Auto</span>
+                    </div>
+                    <div class="player-menu-item" id="menu-theatre-toggle">
+                      <span>Theatre Mode</span>
+                      <span id="menu-theatre-label" style="color:var(--text-secondary);font-size:12px;">Off</span>
                     </div>
                   </div>
                 </div>
 
+                <!-- Theatre Mode -->
+                <button class="player-btn" id="btn-theatre" title="Theatre Mode (T)" aria-label="Toggle Theatre Mode">
+                  <span class="material-symbols-rounded" id="icon-theatre">aspect_ratio</span>
+                </button>
+
                 <!-- Picture-in-Picture / Mini-player -->
-                <button class="player-btn" id="btn-pip" title="Mini-Player" aria-label="Switch to Mini Player">
+                <button class="player-btn" id="btn-pip" title="Mini-Player (I)" aria-label="Switch to Mini Player">
                   <span class="material-symbols-rounded">picture_in_picture_alt</span>
                 </button>
 

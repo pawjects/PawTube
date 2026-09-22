@@ -34,8 +34,9 @@ window.addEventListener('error', (event) => {
 import { Router } from '../router/router.js';
 import { initSearch } from '../../components/search/searchDropdown.js';
 import { playerController } from '../../player/player.js';
+import '../../components/video/cardMenu.js';
 
-document.addEventListener('DOMContentLoaded', () => {
+function bootstrapPawTube() {
   const mount = document.getElementById('main-content');
   if (!mount) {
     console.error('PawTube mount container #main-content not found');
@@ -60,4 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrapPawTube);
+} else {
+  bootstrapPawTube();
+}

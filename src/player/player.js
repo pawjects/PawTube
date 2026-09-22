@@ -41,7 +41,8 @@ export class VideoPlayerController {
       playbackRate: 1.0,
       captionsEnabled: false,
       mode: 'hidden', // 'watch' | 'mini' | 'hidden'
-      isFullscreen: false
+      isFullscreen: false,
+      isTheatre: false
     };
 
     this.isDraggingSeek = false;
@@ -67,13 +68,15 @@ export class VideoPlayerController {
     window.addEventListener('resize', this.boundSyncPosition, { passive: true });
     window.addEventListener('orientationchange', this.boundSyncPosition, { passive: true });
 
-    document.addEventListener('fullscreenchange', () => {
-      this.state.isFullscreen = !!document.fullscreenElement;
+    const handleFullscreenChange = () => {
+      this.state.isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
       this.host.classList.toggle('fullscreen', this.state.isFullscreen);
       const icon = this.host.querySelector('#icon-fullscreen');
       if (icon) icon.textContent = this.state.isFullscreen ? 'fullscreen_exit' : 'fullscreen';
       this.syncPositionWithSlot();
-    });
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
 
     this.isInitialized = true;
   }
@@ -83,6 +86,9 @@ export class VideoPlayerController {
   }
 
   setMode(mode) {
+    if (mode !== 'watch') {
+      this.exitTheatreMode();
+    }
     this.state.mode = mode;
     if (!this.host) return;
 
@@ -204,6 +210,7 @@ export class VideoPlayerController {
   }
 
   onNavigateAwayFromWatch() {
+    this.exitTheatreMode();
     if (this.state.currentVideoId && this.state.mode === 'watch') {
       this.setMode('mini');
     }
@@ -265,6 +272,8 @@ export class VideoPlayerController {
     const settingsBtn = this.host.querySelector('#btn-settings');
     const settingsMenu = this.host.querySelector('#player-settings-menu');
     const speedMenuItem = this.host.querySelector('#menu-speed');
+    const theatreToggleItem = this.host.querySelector('#menu-theatre-toggle');
+    const theatreBtn = this.host.querySelector('#btn-theatre');
     const pipBtn = this.host.querySelector('#btn-pip');
     const fullscreenBtn = this.host.querySelector('#btn-fullscreen');
     const progressContainer = this.host.querySelector('#player-progress-container');
@@ -371,14 +380,29 @@ export class VideoPlayerController {
       });
     }
 
-    // Playback Speed Cycle: 0.5 -> 0.75 -> 1 -> 1.25 -> 1.5 -> 2 -> 1
-    const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+    // Playback Speed Cycle: 0.25 -> 0.5 -> 0.75 -> 1 -> 1.25 -> 1.5 -> 1.75 -> 2 -> 1
+    const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
     if (speedMenuItem) {
       speedMenuItem.onclick = (e) => {
         e.stopPropagation();
         const currentIdx = SPEEDS.indexOf(this.state.playbackRate);
         const nextIdx = (currentIdx + 1) % SPEEDS.length;
         this.setPlaybackRate(SPEEDS[nextIdx]);
+      };
+    }
+
+    // Theatre Mode toggles
+    if (theatreBtn) {
+      theatreBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleTheatreMode();
+      };
+    }
+
+    if (theatreToggleItem) {
+      theatreToggleItem.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleTheatreMode();
       };
     }
 
@@ -439,19 +463,48 @@ export class VideoPlayerController {
         handleSeekAction(e);
       };
 
-      // Drag Scrubbing
+      // Drag Scrubbing with immediate visual response and single seek on release
+      let dragSeekPos = -1;
+      const updateVisualScrub = (pos) => {
+        const fillBar = this.host.querySelector('#player-progress-filled');
+        const thumb = this.host.querySelector('#player-progress-thumb');
+        const timeDisplay = this.host.querySelector('#player-time-display');
+        if (fillBar) fillBar.style.width = `${pos * 100}%`;
+        if (thumb) thumb.style.left = `${pos * 100}%`;
+        if (hoverBar) hoverBar.style.width = `${pos * 100}%`;
+        if (tooltip && this.state.duration > 0) {
+          tooltip.style.display = 'block';
+          tooltip.style.left = `${pos * 100}%`;
+          tooltip.textContent = formatTime(pos * this.state.duration);
+        }
+        if (timeDisplay && this.state.duration > 0) {
+          timeDisplay.textContent = `${formatTime(pos * this.state.duration)} / ${formatTime(this.state.duration)}`;
+        }
+      };
+
       const startDrag = (e) => {
         this.isDraggingSeek = true;
         progressContainer.classList.add('dragging');
-        handleSeekAction(e);
+        const pos = getPos(e);
+        dragSeekPos = pos;
+        updateVisualScrub(pos);
 
         const onMove = (moveEvent) => {
-          if (this.isDraggingSeek) handleSeekAction(moveEvent);
+          if (this.isDraggingSeek) {
+            const currentPos = getPos(moveEvent);
+            dragSeekPos = currentPos;
+            updateVisualScrub(currentPos);
+          }
         };
 
         const onEnd = () => {
+          if (this.isDraggingSeek && dragSeekPos >= 0 && this.state.duration > 0) {
+            this.seekTo(dragSeekPos * this.state.duration);
+          }
           this.isDraggingSeek = false;
+          dragSeekPos = -1;
           progressContainer.classList.remove('dragging');
+          if (tooltip) tooltip.style.display = 'none';
           window.removeEventListener('mousemove', onMove);
           window.removeEventListener('mouseup', onEnd);
           window.removeEventListener('touchmove', onMove);
@@ -507,12 +560,21 @@ export class VideoPlayerController {
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
         this.setVolume(Math.max(0, this.state.volume - 10));
-      } else if (e.key === 'm') {
+      } else if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
         this.toggleMute();
-      } else if (e.key === 'f') {
+      } else if (e.key === 'f' || e.key === 'F') {
         e.preventDefault();
         this.toggleFullscreen();
+      } else if (e.key === 't' || e.key === 'T') {
+        e.preventDefault();
+        this.toggleTheatreMode();
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        captionsBtn?.click();
+      } else if (e.key === 'i' || e.key === 'I') {
+        e.preventDefault();
+        pipBtn?.click();
       }
     });
   }
@@ -688,7 +750,8 @@ export class VideoPlayerController {
 
   toggleFullscreen() {
     if (!this.host) return;
-    if (!document.fullscreenElement) {
+    const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (!isFull) {
       if (this.host.requestFullscreen) {
         this.host.requestFullscreen().catch(() => {});
       } else if (this.host.webkitRequestFullscreen) {
@@ -701,6 +764,68 @@ export class VideoPlayerController {
         document.webkitExitFullscreen();
       }
     }
+  }
+
+  toggleTheatreMode() {
+    if (this.state.mode !== 'watch') return;
+    this.state.isTheatre = !this.state.isTheatre;
+
+    const theatreWrapper = document.getElementById('theatre-stage-wrapper');
+    const normalParent = document.getElementById('normal-player-slot-parent');
+    const slot = document.getElementById('watch-player-slot');
+
+    if (this.host) {
+      this.host.classList.add('transitioning');
+      setTimeout(() => this.host?.classList.remove('transitioning'), 350);
+    }
+
+    if (this.state.isTheatre) {
+      document.body.classList.add('theatre-mode-active');
+      if (theatreWrapper && slot && slot.parentElement !== theatreWrapper) {
+        theatreWrapper.appendChild(slot);
+      }
+    } else {
+      document.body.classList.remove('theatre-mode-active');
+      if (normalParent && slot && slot.parentElement !== normalParent) {
+        normalParent.appendChild(slot);
+      }
+    }
+
+    this.syncTheatreUI();
+    // Allow multiple frame stages for layout reflow
+    requestAnimationFrame(() => {
+      this.syncPositionWithSlot();
+      setTimeout(() => this.syncPositionWithSlot(), 60);
+      setTimeout(() => this.syncPositionWithSlot(), 200);
+      setTimeout(() => this.syncPositionWithSlot(), 320);
+    });
+  }
+
+  exitTheatreMode() {
+    if (!this.state.isTheatre) return;
+    this.state.isTheatre = false;
+    document.body.classList.remove('theatre-mode-active');
+    const normalParent = document.getElementById('normal-player-slot-parent');
+    const slot = document.getElementById('watch-player-slot');
+    if (normalParent && slot && slot.parentElement !== normalParent) {
+      normalParent.appendChild(slot);
+    }
+    this.syncTheatreUI();
+    requestAnimationFrame(() => {
+      this.syncPositionWithSlot();
+      setTimeout(() => this.syncPositionWithSlot(), 80);
+    });
+  }
+
+  syncTheatreUI() {
+    if (!this.host) return;
+    const theatreBtn = this.host.querySelector('#btn-theatre');
+    const theatreIcon = this.host.querySelector('#icon-theatre');
+    const menuLabel = this.host.querySelector('#menu-theatre-label');
+
+    if (theatreBtn) theatreBtn.classList.toggle('active', this.state.isTheatre);
+    if (theatreIcon) theatreIcon.textContent = this.state.isTheatre ? 'crop_16_9' : 'aspect_ratio';
+    if (menuLabel) menuLabel.textContent = this.state.isTheatre ? 'On' : 'Off';
   }
 
   onVideoEnded() {

@@ -7,8 +7,18 @@ import { escapeHtml } from '../../utils/dom.js';
 export function renderVideoCard(v) {
   if (!v || !v.id) return '';
   const thumbUrl = v.thumb || v.thumbnail || (v.id ? `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg` : '');
-  const channelName = v.channel || v.author || 'Unknown Channel';
-  const channelId = v.channelId || v.authorId || '';
+  const channelName = v.channel || v.author || v.uploaderName || 'Unknown Channel';
+  
+  let cleanChannelId = (v.channelId || v.authorId || '').replace(/^\/channel\//, '');
+  if (!cleanChannelId && v.uploaderUrl) {
+    cleanChannelId = v.uploaderUrl.replace(/^\/channel\//, '');
+  }
+  if (!cleanChannelId && channelName && channelName !== 'Unknown Channel') {
+    cleanChannelId = channelName;
+  }
+  const channelHash = cleanChannelId ? `#/channel/${encodeURIComponent(cleanChannelId)}` : '';
+  const isVerified = Boolean(v.uploaderVerified || v.verified);
+  const avatarUrl = v.avatar || v.uploaderAvatar || '';
 
   return `
     <div class="video-card" data-video-id="${escapeHtml(v.id)}" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
@@ -17,14 +27,27 @@ export function renderVideoCard(v) {
         <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
       </div>
       <div class="card-info">
-        ${v.avatar ? `
-          <img class="card-avatar" src="${escapeHtml(v.avatar)}" alt="" loading="lazy" 
-            onclick="event.stopPropagation(); if ('${escapeHtml(channelId)}') window.location.hash='#/channel?id=${encodeURIComponent(channelId)}';" onerror="this.style.display='none';" />
-        ` : ''}
+        ${avatarUrl ? `
+          <img class="card-avatar" src="${escapeHtml(avatarUrl)}" alt="" loading="lazy" 
+            onclick="event.stopPropagation(); if ('${escapeHtml(channelHash)}') window.location.hash='${escapeHtml(channelHash)}';" onerror="this.style.display='none';" />
+        ` : (cleanChannelId ? `
+          <div class="card-avatar-placeholder" onclick="event.stopPropagation(); window.location.hash='${escapeHtml(channelHash)}';" title="${escapeHtml(channelName)}">
+            <span class="material-symbols-rounded">person</span>
+          </div>
+        ` : '')}
         <div class="card-meta">
-          <div class="card-title">${escapeHtml(v.title)}</div>
-          <div class="card-channel" onclick="event.stopPropagation(); if ('${escapeHtml(channelId)}') window.location.hash='#/channel?id=${encodeURIComponent(channelId)}';">
-            ${escapeHtml(channelName)}
+          <div class="card-title-row">
+            <div class="card-title" title="${escapeHtml(v.title)}">${escapeHtml(v.title)}</div>
+            <button type="button" class="card-overflow-btn" aria-label="Video options" 
+              onclick="event.stopPropagation(); if (window.pawtubeOpenCardMenu) window.pawtubeOpenCardMenu(this, event, '${escapeHtml(v.id)}', '${escapeHtml(v.title.replace(/'/g, "\\'"))}', '${escapeHtml(cleanChannelId)}', '${escapeHtml(channelName.replace(/'/g, "\\'"))}');">
+              <span class="material-symbols-rounded">more_vert</span>
+            </button>
+          </div>
+          <div class="card-channel" onclick="event.stopPropagation(); if ('${escapeHtml(channelHash)}') window.location.hash='${escapeHtml(channelHash)}';">
+            <span>${escapeHtml(channelName)}</span>
+            ${isVerified ? `
+              <span class="material-symbols-rounded verified-badge" title="Verified Creator">check_circle</span>
+            ` : ''}
           </div>
           <div class="card-stats">
             <span>${escapeHtml(v.viewsFormatted || '')}</span>
