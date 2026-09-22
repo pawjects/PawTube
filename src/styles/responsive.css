@@ -82,6 +82,207 @@
 }
 
 /* ==========================================================================
+   Unified Persistent Player & Mini-Player (Liquid Glass)
+   ========================================================================== */
+.pawtube-persistent-player {
+  position: fixed;
+  z-index: 95;
+  box-sizing: border-box;
+  font-family: var(--font-base);
+  transition: opacity 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: #000;
+}
+
+.pawtube-persistent-player.mode-hidden {
+  display: none !important;
+}
+
+/* WATCH MODE */
+.pawtube-persistent-player.mode-watch {
+  position: fixed;
+  background: #000;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: var(--shadow-glass);
+}
+
+.pawtube-persistent-player.mode-watch .mini-player-bar {
+  display: none !important;
+}
+
+.pawtube-persistent-player.mode-watch .player-media-box {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* FULLSCREEN IN WATCH MODE */
+.pawtube-persistent-player.mode-watch.fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+  z-index: 99999 !important;
+}
+
+.pawtube-persistent-player.mode-watch.fullscreen .player-bottom-controls {
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+/* MINI-PLAYER MODE */
+.pawtube-persistent-player.mode-mini {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 380px;
+  height: 74px;
+  background: var(--glass-bnav, rgba(16, 18, 27, 0.85));
+  backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-backdrop-filter: var(--blur-lg) saturate(180%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  display: flex !important;
+  align-items: center;
+  padding: 7px 10px;
+  gap: 12px;
+  z-index: 95;
+  overflow: hidden;
+}
+
+.pawtube-persistent-player.mode-mini .player-media-box {
+  width: 106px;
+  height: 60px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+  background: #000;
+  cursor: pointer;
+}
+
+.pawtube-persistent-player.mode-mini .custom-player-ui,
+.pawtube-persistent-player.mode-mini .player-center-play,
+.pawtube-persistent-player.mode-mini .player-loading-spinner,
+.pawtube-persistent-player.mode-mini .seek-ripple {
+  display: none !important;
+}
+
+.pawtube-persistent-player.mode-mini .mini-player-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mini-player-expand-tap {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.mini-player-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.mini-player-channel {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+}
+
+.mini-player-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mini-player-btn {
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.15s;
+}
+
+.mini-player-btn:hover {
+  background: var(--bg-hover);
+  transform: scale(1.05);
+}
+
+.mini-player-btn:active {
+  transform: scale(0.95);
+}
+
+.mini-player-progress-line {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2.5px;
+  background: var(--brand-red);
+  pointer-events: none;
+  transition: width 0.3s linear;
+}
+
+/* Mobile Mini-Player responsiveness */
+@media (max-width: 768px) {
+  .pawtube-persistent-player.mode-mini {
+    bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 12px);
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-width: 440px;
+    margin: 0 auto;
+    height: 66px;
+    padding: 6px 8px;
+    gap: 10px;
+  }
+
+  .pawtube-persistent-player.mode-mini .player-media-box {
+    width: 92px;
+    height: 52px;
+    border-radius: 6px;
+  }
+
+  .mini-player-title {
+    font-size: 13px;
+  }
+
+  .mini-player-channel {
+    font-size: 11px;
+  }
+
+  .mini-player-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* ==========================================================================
    Custom Video Player (Liquid Glass)
    ========================================================================== */
 .custom-player-wrapper {
@@ -103,6 +304,48 @@
   position: absolute;
   inset: 0;
   z-index: 1;
+  cursor: pointer;
+}
+
+/* Double-tap Seek Zones Ripple */
+.seek-ripple {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 4px;
+  z-index: 5;
+}
+
+.seek-ripple.left {
+  left: 0;
+  border-top-right-radius: 120px;
+  border-bottom-right-radius: 120px;
+  transform: translateX(-15px);
+}
+
+.seek-ripple.right {
+  right: 0;
+  border-top-left-radius: 120px;
+  border-bottom-left-radius: 120px;
+  transform: translateX(15px);
+}
+
+.seek-ripple.active {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .custom-player-ui {
@@ -117,11 +360,11 @@
   transition: opacity 0.3s;
 }
 
-.custom-player-wrapper.idle {
+.pawtube-persistent-player.idle {
   cursor: none;
 }
 
-.custom-player-wrapper.idle .custom-player-ui {
+.pawtube-persistent-player.idle .custom-player-ui {
   opacity: 0;
 }
 
@@ -132,9 +375,10 @@
   transform: translate(-50%, -50%);
   width: 72px;
   height: 72px;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -147,8 +391,8 @@
 }
 
 .player-center-play:hover {
-  background: rgba(0, 0, 0, 0.7);
-  transform: translate(-50%, -50%) scale(1.1);
+  background: rgba(0, 0, 0, 0.75);
+  transform: translate(-50%, -50%) scale(1.08);
 }
 
 .player-loading-spinner {
@@ -168,35 +412,43 @@
 @keyframes spin { 100% { transform: rotate(360deg); } }
 
 .player-bottom-controls {
-  background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
-  padding: 0 16px 16px;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+  padding: 0 16px 14px;
   pointer-events: auto;
 }
 
+/* Scrubbing bar touch hit area */
 .player-progress-container {
   position: relative;
-  height: 24px;
+  height: 30px;
+  min-height: 30px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
+  touch-action: none;
 }
 
-.player-progress-container::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
+.player-progress-track {
+  position: relative;
+  width: 100%;
   height: 4px;
-  background: rgba(255, 255, 255, 0.2);
-  transition: height 0.2s;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 2px;
+  transition: height 0.15s ease-out;
+}
+
+.player-progress-container:hover .player-progress-track,
+.player-progress-container.dragging .player-progress-track {
+  height: 6px;
 }
 
 .player-progress-hover, .player-progress-buffered, .player-progress-filled {
   position: absolute;
   left: 0;
-  height: 4px;
-  transition: height 0.2s;
+  top: 0;
+  bottom: 0;
+  border-radius: 2px;
 }
 
 .player-progress-hover { background: rgba(255, 255, 255, 0.4); }
@@ -205,31 +457,28 @@
 
 .player-progress-thumb {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   background: var(--brand-red);
-  transform: translateX(-50%) scale(0);
-  transition: transform 0.2s;
-}
-
-.player-progress-container:hover::before,
-.player-progress-container:hover .player-progress-hover,
-.player-progress-container:hover .player-progress-buffered,
-.player-progress-container:hover .player-progress-filled {
-  height: 6px;
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.15s ease-out;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.6);
 }
 
 .player-progress-container:hover .player-progress-thumb,
 .player-progress-container.dragging .player-progress-thumb {
-  transform: translateX(-50%) scale(1);
+  transform: translate(-50%, -50%) scale(1);
 }
 
 .player-time-tooltip {
   position: absolute;
-  bottom: 24px;
+  bottom: 30px;
   transform: translateX(-50%);
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(16, 18, 27, 0.9);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   color: #fff;
   padding: 4px 8px;
   border-radius: var(--radius-xs);
@@ -237,6 +486,7 @@
   font-weight: 500;
   display: none;
   pointer-events: none;
+  white-space: nowrap;
 }
 
 .player-controls-row {
@@ -248,12 +498,14 @@
 .player-controls-left, .player-controls-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .player-btn {
   width: 40px;
   height: 40px;
+  min-width: 40px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -278,6 +530,29 @@
 .player-btn.active {
   color: var(--brand-blue, #3b82f6);
   background: rgba(59, 130, 246, 0.2);
+}
+
+/* Touch controls on Mobile */
+@media (max-width: 640px) {
+  .player-volume-group .player-volume-slider {
+    display: none !important;
+  }
+  .player-volume-group {
+    width: 44px !important;
+  }
+  .player-btn {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .player-time-display {
+    font-size: 11.5px;
+    margin-left: 2px;
+  }
+  .player-controls-left, .player-controls-right {
+    gap: 2px;
+  }
 }
 
 .player-pip-placeholder {

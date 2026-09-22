@@ -6,6 +6,7 @@
 
 import { extractVideoId } from '../../player/videoId.js';
 import { playerController } from '../../player/player.js';
+import { bottomNavManager } from '../../components/nav/bottomNavManager.js';
 import { renderHomePage } from '../../pages/Home/homePage.js';
 import { renderShortsPage } from '../../pages/Shorts/shortsPage.js';
 import { renderLibraryPage } from '../../pages/Library/libraryPage.js';
@@ -20,6 +21,7 @@ export class Router {
   }
 
   init() {
+    bottomNavManager.init();
     window.addEventListener('hashchange', () => this.handleRoute());
     window.addEventListener('popstate', () => this.handleRoute());
     this.handleRoute();
@@ -77,14 +79,14 @@ export class Router {
     // Handle mini-player transitions
     if (previousRoute && previousRoute.includes('watch') && !isNavigatingToWatch) {
       playerController.onNavigateAwayFromWatch();
-    } else if (isNavigatingToWatch) {
-      playerController.hideMiniPlayer();
     }
 
     if (isNavigatingToWatch) {
       const videoId = loc.videoId || loc.params.get('v') || possibleVideoId;
+      const rawTime = loc.params.get('t') || loc.params.get('start') || '0';
+      const startTime = parseFloat(rawTime) || 0;
       this.updateNavigationUI('/watch');
-      renderWatchPage(this.mount, videoId);
+      renderWatchPage(this.mount, videoId, startTime);
       window.scrollTo(0, 0);
       return;
     }
@@ -131,20 +133,15 @@ export class Router {
       const r = el.getAttribute('data-route');
       if (r === route) {
         el.classList.add('active');
+        el.setAttribute('aria-selected', 'true');
       } else {
         el.classList.remove('active');
+        el.setAttribute('aria-selected', 'false');
       }
     });
 
-    // Update bottom nav sliding pill position if applicable
-    const activeBottom = document.querySelector(`.bottom-nav [data-route="${route}"]`);
-    const pill = document.getElementById('bnav-pill');
-    if (activeBottom && pill) {
-      const rect = activeBottom.getBoundingClientRect();
-      const parent = activeBottom.parentElement.getBoundingClientRect();
-      pill.style.width = `${rect.width}px`;
-      pill.style.transform = `translateX(${rect.left - parent.left}px)`;
-    }
+    // Delegate bottom nav pill positioning and animation
+    bottomNavManager.setActive(route);
   }
 }
 

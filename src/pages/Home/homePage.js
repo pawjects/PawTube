@@ -136,10 +136,15 @@ export async function renderHomePage(container, options = {}) {
       </div>
       <div class="continue-watching-rail">
         ${continueWatching.map((v) => `
-          <div class="continue-card" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}'">
-            <div class="continue-thumb-wrap">
+          <div class="continue-card" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}${v.progress ? `&t=${Math.floor(v.progress)}` : ''}'">
+            <div class="continue-thumb-wrap" style="position:relative;overflow:hidden;border-radius:10px;">
               <img src="${escapeHtml(v.thumb || '')}" alt="${escapeHtml(v.title)}" loading="lazy" />
-              <div class="duration-badge">${escapeHtml(v.durationFormatted || '0:00')}</div>
+              <div class="duration-badge">${escapeHtml(v.durationFormatted || (v.duration ? Math.floor(v.duration / 60) + ':' + (v.duration % 60 < 10 ? '0' : '') + (v.duration % 60) : '0:00'))}</div>
+              ${(v.progress && v.watchedPercentage) ? `
+                <div style="position:absolute;bottom:0;left:0;right:0;height:3.5px;background:rgba(255,255,255,0.25);">
+                  <div style="height:100%;background:var(--brand-red);width:${Math.min(100, Math.max(0, v.watchedPercentage))}%;"></div>
+                </div>
+              ` : ''}
             </div>
             <div class="card-title" style="font-size:13.5px;margin-top:6px;">${escapeHtml(v.title)}</div>
             <div class="card-channel" style="font-size:12px;">${escapeHtml(v.channel || v.author || '')}</div>

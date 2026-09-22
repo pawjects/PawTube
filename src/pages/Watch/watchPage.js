@@ -17,7 +17,7 @@ import { escapeHtml } from '../../utils/dom.js';
 
 let watchRenderSeq = 0;
 
-export async function renderWatchPage(container, videoIdInput) {
+export async function renderWatchPage(container, videoIdInput, startTime = 0) {
   const cleanId = extractVideoId(videoIdInput);
   const currentSeq = ++watchRenderSeq;
 
@@ -122,7 +122,7 @@ export async function renderWatchPage(container, videoIdInput) {
   // Mount the Virtual Player Controls immediately (No-Cookie Embed)
   const playerSlot = container.querySelector('#watch-player-slot');
   if (playerSlot) {
-    playerController.mountPlayer(playerSlot, cleanId);
+    playerController.attachToWatch(playerSlot, cleanId, null, startTime);
   }
 
   // 2. Asynchronously fetch video metadata from Piped
