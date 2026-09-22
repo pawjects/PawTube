@@ -37,18 +37,18 @@ PawTube Repository
 3. Import the `PawTube` repository.
 
 ### 2. Configure Build & Output
-- **Framework Preset**: `Other` (or leave default)
+- **Framework Preset**: `Vite` (automatically detected)
 - **Root Directory**: `./`
-- **Build Command**: `npm run build`
-- **Output Directory**: Leave empty / default (root files and `/public` are served automatically)
+- **Build Command**: `npm run build` (`vite build`)
+- **Output Directory**: `dist` (automatically detected and specified in `vercel.json`)
 - **Environment Variables**: None required! PawTube operates without requiring any API keys.
 
 ### 3. Deploy
 Click **Deploy**.
 Vercel automatically detects:
+- `vite` framework and compiles the frontend into `dist/`.
 - All serverless functions in `/api/**` (e.g., `/api/piped/trending`, `/api/piped/video`, `/api/health`).
-- Static assets and `index.html`.
-- `vercel.json` rewrites that route all browser navigation to `/index.html` for client-side routing.
+- `vercel.json` rewrites that route all browser navigation to `/index.html` (served from `dist/index.html`) without 404s.
 
 ---
 

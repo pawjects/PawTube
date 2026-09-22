@@ -5,12 +5,15 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "build": "echo 'Build complete'",
+    "build": "vite build",
     "start": "node server.js",
     "lint": "node -c server.js && node -c api/_piped.js && node -c api/piped/trending.js && node -c api/piped/search.js && node -c api/piped/video.js && node -c api/health.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
   }
 }
