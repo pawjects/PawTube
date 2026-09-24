@@ -4,16 +4,26 @@
 
 import { extractVideoId } from '../../player/videoId.js';
 
+export function normalizeDurationSeconds(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const num = typeof raw === 'number' ? raw : parseFloat(String(raw).trim());
+  if (isNaN(num) || !isFinite(num)) return null;
+  if (num < 0) return null; // Live streams or invalid negative values
+  return Math.floor(num);
+}
+
 export function formatDuration(seconds) {
-  if (seconds === undefined || seconds === null) return '0:00';
-  if (seconds < 0) return 'LIVE';
-  const num = Math.floor(Number(seconds)) || 0;
-  if (num <= 0) return '0:00';
-  const h = Math.floor(num / 3600);
-  const m = Math.floor((num % 3600) / 60);
-  const s = num % 60;
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  const sec = normalizeDurationSeconds(seconds);
+  if (sec === null || sec < 0) return '00:00';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const padM = String(m).padStart(2, '0');
+  const padS = String(s).padStart(2, '0');
+  if (h > 0) {
+    return `${h}:${padM}:${padS}`;
+  }
+  return `${padM}:${padS}`;
 }
 
 export function formatViews(views) {
@@ -64,8 +74,36 @@ export function normalizeMediaItem(raw) {
   const id = extractVideoId(raw.id || raw.videoId || raw.url);
   if (!id || id.length !== 11 || !raw.title) return null;
 
-  const duration = typeof raw.duration === 'number' ? raw.duration : (parseInt(raw.duration, 10) || 0);
+  const durationSeconds = normalizeDurationSeconds(
+    raw.durationSeconds !== undefined ? raw.durationSeconds : raw.duration
+  );
+  const rawDuration = typeof raw.duration === 'number' ? raw.duration : (parseInt(raw.duration, 10) || 0);
   const views = typeof raw.views === 'number' ? raw.views : (parseInt(String(raw.views || '').replace(/[^0-9]/g, ''), 10) || 0);
+
+  // Authoritative live stream detection using metadata signals
+  const isLive = Boolean(
+    raw.isLive === true ||
+    raw.liveNow === true ||
+    raw.live === true ||
+    raw.type === 'live' ||
+    raw.type === 'livestream' ||
+    raw.type === 'live_stream' ||
+    raw.streamType === 'live' ||
+    raw.videoType === 'live' ||
+    rawDuration < 0 ||
+    (raw.uploadedDate === null && raw.uploaded === -1) ||
+    (raw.badges && Array.isArray(raw.badges) && raw.badges.some((b) => /LIVE|PREMIERE/i.test(String(b))))
+  );
+
+  // Authoritative short detection using multiple metadata signals
+  const isShort = Boolean(
+    raw.isShort === true ||
+    raw.type === 'short' ||
+    raw.type === 'shorts' ||
+    (raw.url && raw.url.includes('/shorts/')) ||
+    (raw.badges && Array.isArray(raw.badges) && raw.badges.some((b) => /SHORTS?/i.test(String(b)))) ||
+    (durationSeconds !== null && durationSeconds > 0 && durationSeconds <= 60 && /#shorts?\b/i.test(raw.title || ''))
+  );
 
   return {
     id,
@@ -77,15 +115,16 @@ export function normalizeMediaItem(raw) {
     channelId: raw.channelId || raw.authorId || (raw.uploaderUrl ? raw.uploaderUrl.replace(/^\/channel\//, '') : ''),
     thumb: raw.thumb || raw.thumbnail || raw.thumbnailUrl || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
     avatar: raw.avatar || raw.authorAvatar || raw.uploaderAvatar || '',
-    duration,
-    durationFormatted: raw.durationFormatted || formatDuration(duration),
+    durationSeconds,
+    duration: durationSeconds !== null ? durationSeconds : 0,
+    durationFormatted: raw.durationFormatted || formatDuration(durationSeconds),
     views,
     viewsFormatted: raw.viewsFormatted || formatViews(views),
     uploadedDate: raw.uploadedDate || raw.uploadDate || raw.uploaded || '',
     publishedTime: raw.publishedTime || raw.uploadedDate || '',
     uploadedFormatted: raw.uploadedFormatted || formatUploadedDate(raw.uploadedDate || raw.uploadDate || raw.uploaded || raw.publishedTime),
-    isShort: Boolean(raw.isShort || (duration > 0 && duration <= 75)),
-    isLive: Boolean(raw.isLive || duration < 0),
-    type: raw.type || 'video'
+    isShort,
+    isLive,
+    type: isLive ? 'live' : (isShort ? 'short' : (raw.type || 'video'))
   };
 }

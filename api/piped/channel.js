@@ -1,4 +1,4 @@
-const { requestPiped, normalizeMediaItem, sendResponse, sendError } = require('../_piped');
+const { requestPiped, normalizeMediaItem, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,10 +10,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const channelId = url.searchParams.get('id') || '';
-  const nextpage = url.searchParams.get('nextpage') || '';
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
+  const { getParam, customInstance } = parseQueryParams(req);
+  const channelId = getParam('id', '');
+  const nextpage = getParam('nextpage', '');
 
   if (!channelId) {
     sendError(res, 400, 'INVALID_CHANNEL_ID', 'Channel ID is required.');

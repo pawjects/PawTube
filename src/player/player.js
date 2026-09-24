@@ -6,21 +6,8 @@
 
 import { buildNoCookieEmbedUrl } from './embed.js';
 import { extractVideoId } from './videoId.js';
-import { addToHistory, updateHistoryProgress } from '../storage/history/historyStorage.js';
-
-function formatTime(seconds) {
-  if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const padS = s < 10 ? `0${s}` : `${s}`;
-  if (h > 0) {
-    const padM = m < 10 ? `0${m}` : `${m}`;
-    return `${h}:${padM}:${padS}`;
-  }
-  return `${m}:${padS}`;
-}
+import { addToHistory, updateHistoryProgress, markVideoCompleted } from '../storage/history/historyStorage.js';
+import { formatDuration } from '../api/normalization/mediaModels.js';
 
 export class VideoPlayerController {
   constructor() {
@@ -62,6 +49,12 @@ export class VideoPlayerController {
 
     this.bindPlayerEvents();
     this.startTicker();
+
+    this.iframe.addEventListener('load', () => {
+      this.sendListeningHandshake();
+      setTimeout(() => this.sendListeningHandshake(), 300);
+      setTimeout(() => this.sendListeningHandshake(), 1000);
+    });
 
     window.addEventListener('message', this.boundOnMessage);
     window.addEventListener('scroll', this.boundSyncPosition, { passive: true });
@@ -143,7 +136,12 @@ export class VideoPlayerController {
     // New video: initialize
     this.state.currentVideoId = cleanId;
     this.state.currentTime = startTime || 0;
-    this.state.duration = (metadata && metadata.duration) ? metadata.duration : 0;
+    const initialDuration = metadata
+      ? (metadata.durationSeconds !== undefined && metadata.durationSeconds !== null
+          ? metadata.durationSeconds
+          : (metadata.duration || 0))
+      : 0;
+    this.state.duration = initialDuration;
     this.state.isPlaying = true;
     this.state.isBuffering = true;
 
@@ -169,14 +167,16 @@ export class VideoPlayerController {
         channel: metadata.channel || metadata.author || '',
         thumb: metadata.thumb || `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
         duration: this.state.duration,
+        durationSeconds: this.state.duration,
         progress: startTime
       });
     }
 
-    // Handshake with YouTube IFrame API
-    setTimeout(() => {
-      this.sendIframeCommand('listening');
-    }, 600);
+    // Handshake with YouTube IFrame API (both listening event and immediate query)
+    this.sendListeningHandshake();
+    setTimeout(() => this.sendListeningHandshake(), 300);
+    setTimeout(() => this.sendListeningHandshake(), 800);
+    setTimeout(() => this.sendListeningHandshake(), 1600);
   }
 
   mountPlayer(slot, cleanId, metadata = null, startTime = 0) {
@@ -211,6 +211,9 @@ export class VideoPlayerController {
 
   onNavigateAwayFromWatch() {
     this.exitTheatreMode();
+    if (this.state.currentVideoId) {
+      updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
+    }
     if (this.state.currentVideoId && this.state.mode === 'watch') {
       this.setMode('mini');
     }
@@ -237,6 +240,9 @@ export class VideoPlayerController {
   }
 
   closeMiniPlayer() {
+    if (this.state.currentVideoId) {
+      updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
+    }
     this.pause();
     this.sendIframeCommand('stopVideo');
     this.state.currentVideoId = null;
@@ -442,7 +448,7 @@ export class VideoPlayerController {
         if (tooltip && this.state.duration > 0) {
           tooltip.style.display = 'block';
           tooltip.style.left = `${pos * 100}%`;
-          tooltip.textContent = formatTime(pos * this.state.duration);
+          tooltip.textContent = formatDuration(pos * this.state.duration);
         }
       };
 
@@ -475,10 +481,10 @@ export class VideoPlayerController {
         if (tooltip && this.state.duration > 0) {
           tooltip.style.display = 'block';
           tooltip.style.left = `${pos * 100}%`;
-          tooltip.textContent = formatTime(pos * this.state.duration);
+          tooltip.textContent = formatDuration(pos * this.state.duration);
         }
         if (timeDisplay && this.state.duration > 0) {
-          timeDisplay.textContent = `${formatTime(pos * this.state.duration)} / ${formatTime(this.state.duration)}`;
+          timeDisplay.textContent = `${formatDuration(pos * this.state.duration)} / ${formatDuration(this.state.duration)}`;
         }
       };
 
@@ -588,6 +594,15 @@ export class VideoPlayerController {
     }
   }
 
+  sendListeningHandshake() {
+    if (this.iframe && this.iframe.contentWindow) {
+      try {
+        this.iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1 }), '*');
+        this.iframe.contentWindow.postMessage(JSON.stringify({ event: 'listening' }), '*');
+      } catch {}
+    }
+  }
+
   handleIframeMessage(event) {
     if (!event || !event.data) return;
     try {
@@ -606,16 +621,20 @@ export class VideoPlayerController {
         }
       }
 
-      // Handle infoDelivery
-      if (data.event === 'infoDelivery' && data.info) {
+      // Handle infoDelivery and initialDelivery events from YouTube Iframe API
+      if ((data.event === 'infoDelivery' || data.event === 'initialDelivery') && data.info) {
         const info = data.info;
         if (info.currentTime !== undefined && !this.isDraggingSeek) {
           this.state.currentTime = info.currentTime;
           this.updateProgressUI();
         }
-        if (info.duration !== undefined && info.duration > 0) {
+        if (info.duration !== undefined && typeof info.duration === 'number' && info.duration > 0) {
           this.state.duration = info.duration;
           this.updateProgressUI();
+        }
+        if (info.videoLoadedFraction !== undefined) {
+          const bufBar = this.host?.querySelector('#player-progress-buffered');
+          if (bufBar) bufBar.style.width = `${Math.min(100, Math.max(0, info.videoLoadedFraction * 100))}%`;
         }
         if (info.playerState !== undefined) {
           if (info.playerState === 1) this.setPlayingState(true);
@@ -658,6 +677,9 @@ export class VideoPlayerController {
   pause() {
     this.sendIframeCommand('pauseVideo');
     this.setPlayingState(false);
+    if (this.state.currentVideoId) {
+      updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
+    }
   }
 
   setPlayingState(playing) {
@@ -696,7 +718,7 @@ export class VideoPlayerController {
     this.sendIframeCommand('seekTo', [target, true]);
     this.updateProgressUI();
     if (this.state.currentVideoId) {
-      updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration);
+      updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
     }
   }
 
@@ -830,15 +852,23 @@ export class VideoPlayerController {
 
   onVideoEnded() {
     this.setPlayingState(false);
+    if (this.state.currentVideoId) {
+      markVideoCompleted(this.state.currentVideoId);
+    }
     this.seekTo(0);
   }
 
   updateMetadata(metadata) {
     if (!metadata) return;
     this.state.currentMetadata = { ...this.state.currentMetadata, ...metadata };
-    if (metadata.duration && typeof metadata.duration === 'number') {
-      this.state.duration = metadata.duration;
-      this.updateProgressUI();
+    const dur = (metadata.durationSeconds !== undefined && metadata.durationSeconds !== null)
+      ? metadata.durationSeconds
+      : metadata.duration;
+    if (dur && typeof dur === 'number' && dur > 0) {
+      if (!this.state.duration || this.state.duration <= 0) {
+        this.state.duration = dur;
+        this.updateProgressUI();
+      }
     }
     this.syncMiniPlayerUI();
   }
@@ -862,16 +892,29 @@ export class VideoPlayerController {
     const progressContainer = this.host.querySelector('#player-progress-container');
     const miniProgress = this.host.querySelector('#mini-player-progress-line');
 
-    const pct = (this.state.duration > 0)
-      ? Math.min(100, Math.max(0, (this.state.currentTime / this.state.duration) * 100))
+    const duration = this.state.duration;
+    const currentTime = this.state.currentTime;
+    const pct = (duration > 0)
+      ? Math.min(100, Math.max(0, (currentTime / duration) * 100))
       : 0;
 
-    if (filled) filled.style.width = `${pct}%`;
-    if (thumb) thumb.style.left = `${pct}%`;
-    if (miniProgress) miniProgress.style.width = `${pct}%`;
-    if (progressContainer) progressContainer.setAttribute('aria-valuenow', Math.round(pct));
+    if (filled) {
+      filled.style.width = `${pct}%`;
+      filled.style.backgroundColor = 'var(--brand-red, #ff334b)';
+    }
+    if (thumb) {
+      thumb.style.left = `${pct}%`;
+      thumb.style.backgroundColor = 'var(--brand-red, #ff334b)';
+    }
+    if (miniProgress) {
+      miniProgress.style.width = `${pct}%`;
+      miniProgress.style.backgroundColor = 'var(--brand-red, #ff334b)';
+    }
+    if (progressContainer) {
+      progressContainer.setAttribute('aria-valuenow', Math.round(pct));
+    }
     if (timeDisplay) {
-      timeDisplay.textContent = `${formatTime(this.state.currentTime)} / ${formatTime(this.state.duration)}`;
+      timeDisplay.textContent = `${formatDuration(currentTime)} / ${formatDuration(duration)}`;
     }
   }
 
@@ -879,6 +922,11 @@ export class VideoPlayerController {
     clearInterval(this.tickerInterval);
     this.tickerInterval = setInterval(() => {
       if (this.state.isPlaying && !this.isDraggingSeek) {
+        // Direct query to iframe to guarantee synchronization and keep connection active
+        this.sendIframeCommand('getCurrentTime');
+        this.sendIframeCommand('getDuration');
+        this.sendListeningHandshake();
+
         this.state.currentTime += 0.5 * this.state.playbackRate;
         if (this.state.duration > 0 && this.state.currentTime > this.state.duration) {
           this.state.currentTime = this.state.duration;

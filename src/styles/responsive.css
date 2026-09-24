@@ -117,6 +117,8 @@
   transition: border-radius 0.2s ease, box-shadow 0.2s ease, opacity 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
   background: #000;
   contain: layout;
+  max-width: 100vw;
+  overflow: hidden;
 }
 
 .pawtube-persistent-player.transitioning {
@@ -134,10 +136,57 @@
   max-height: 100vh !important;
   border-radius: 0 !important;
   z-index: 999999 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #000 !important;
+  overflow: hidden !important;
+  aspect-ratio: auto !important;
+}
+
+.pawtube-persistent-player.fullscreen .player-media-box,
+.pawtube-persistent-player.mode-watch.fullscreen .player-media-box {
+  position: relative !important;
+  width: min(100vw, calc(100vh * (16 / 9))) !important;
+  height: min(100vh, calc(100vw * (9 / 16))) !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  aspect-ratio: 16 / 9 !important;
+  margin: auto !important;
+  overflow: hidden !important;
+  border-radius: 0 !important;
 }
 
 .pawtube-persistent-player.mode-hidden {
   display: none !important;
+}
+
+/* Base Player Media Box */
+.player-media-box {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #000;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.player-media-box iframe,
+#pawtube-iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  pointer-events: none;
 }
 
 /* WATCH MODE */
@@ -147,10 +196,14 @@
   border-radius: 16px;
   overflow: hidden;
   box-shadow: var(--shadow-glass);
+  aspect-ratio: 16 / 9;
+  max-width: 100vw;
+  box-sizing: border-box;
 }
 
 body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   border-radius: 0 !important;
+  max-width: 100vw !important;
 }
 
 .pawtube-persistent-player.mode-watch .mini-player-bar {
@@ -162,6 +215,11 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   inset: 0;
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .pawtube-persistent-player.mode-watch.fullscreen .player-bottom-controls {
@@ -190,8 +248,9 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
 }
 
 .pawtube-persistent-player.mode-mini .player-media-box {
-  width: 106px;
-  height: 60px;
+  width: 106.67px;
+  height: auto;
+  aspect-ratio: 16 / 9;
   border-radius: 8px;
   overflow: hidden;
   position: relative;
@@ -277,9 +336,10 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   position: absolute;
   bottom: 0;
   left: 0;
-  height: 2.5px;
-  background: var(--brand-red);
+  height: 3px;
+  background: var(--brand-red, #ff334b) !important;
   pointer-events: none;
+  z-index: 10;
   transition: width 0.3s linear;
 }
 
@@ -298,9 +358,11 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   }
 
   .pawtube-persistent-player.mode-mini .player-media-box {
-    width: 92px;
-    height: 52px;
+    width: 96px;
+    height: auto;
+    aspect-ratio: 16 / 9;
     border-radius: 6px;
+    flex-shrink: 0;
   }
 
   .mini-player-title {
@@ -488,9 +550,9 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   border-radius: 2px;
 }
 
-.player-progress-hover { background: rgba(255, 255, 255, 0.4); }
-.player-progress-buffered { background: rgba(255, 255, 255, 0.3); }
-.player-progress-filled { background: var(--brand-red); }
+.player-progress-hover { background: rgba(255, 255, 255, 0.4); z-index: 1; }
+.player-progress-buffered { background: rgba(255, 255, 255, 0.3); z-index: 2; }
+.player-progress-filled { background: var(--brand-red, #ff334b) !important; z-index: 3; }
 
 .player-progress-thumb {
   position: absolute;
@@ -498,10 +560,11 @@ body.theatre-mode-active .pawtube-persistent-player.mode-watch {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--brand-red);
+  background: var(--brand-red, #ff334b) !important;
   transform: translate(-50%, -50%) scale(0);
   transition: transform 0.15s ease-out;
   box-shadow: 0 1px 4px rgba(0,0,0,0.6);
+  z-index: 4;
 }
 
 .player-progress-container:hover .player-progress-thumb,
@@ -779,10 +842,11 @@ body.theatre-mode-active .theatre-stage-wrapper {
 }
 
 body.theatre-mode-active .theatre-stage-wrapper #watch-player-slot {
-  width: 100%;
+  width: min(100%, calc(min(76vh, 800px) * (16 / 9)));
   max-width: 100%;
   aspect-ratio: 16 / 9;
   max-height: min(76vh, 800px);
+  margin: 0 auto;
   border-radius: 0 !important;
   box-shadow: none !important;
 }
@@ -1260,9 +1324,22 @@ body.theatre-mode-active .watch-layout {
   }
   #watch-player-slot {
     border-radius: 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
   }
   .pawtube-persistent-player.mode-watch {
     border-radius: 12px !important;
+    max-width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    overflow: hidden !important;
+  }
+  .pawtube-persistent-player.mode-watch .player-media-box,
+  .player-media-box {
+    aspect-ratio: 16 / 9 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
   }
   #btn-captions, #btn-theatre {
     display: none !important;
@@ -1280,6 +1357,25 @@ body.theatre-mode-active .watch-layout {
 @media (max-width: 360px) {
   .main-content {
     padding: 8px 8px calc(var(--bottom-nav-height) + var(--safe-bottom) + 20px) !important;
+  }
+  #watch-player-slot {
+    border-radius: 8px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+  }
+  .pawtube-persistent-player.mode-watch {
+    border-radius: 8px !important;
+    max-width: 100% !important;
+    aspect-ratio: 16 / 9 !important;
+    overflow: hidden !important;
+  }
+  .pawtube-persistent-player.mode-watch .player-media-box,
+  .player-media-box {
+    aspect-ratio: 16 / 9 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 100% !important;
   }
   .watch-title {
     font-size: 15px !important;
@@ -1405,6 +1501,151 @@ body.theatre-mode-active .watch-layout {
   .video-grid {
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
     gap: 30px 18px !important;
+  }
+}
+
+/* ==========================================================================
+   Compact Horizontal List Responsive Rules (Continue Watching & Watch History)
+   Small 16:9 thumbnail on LEFT + useful information beside it on RIGHT
+   ========================================================================== */
+
+/* Universal compact list structure */
+.compact-video-grid,
+.compact-video-list {
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  gap: 10px !important;
+  box-sizing: border-box !important;
+}
+
+/* Wide desktop: 2-column of compact horizontal rows (preserves compact row layout) */
+@media (min-width: 1100px) {
+  .compact-video-grid,
+  .compact-video-list {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px 14px !important;
+  }
+}
+
+/* Base item row layout */
+.compact-video-card,
+.compact-list-item {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  min-height: 72px !important;
+}
+
+/* Responsive thumbnail sizing: small 16:9 on the left */
+@media (max-width: 350px) {
+  /* Narrow screens around 320px */
+  .compact-video-card,
+  .compact-list-item {
+    gap: 8px !important;
+    padding: 6px 8px !important;
+    border-radius: 10px !important;
+  }
+  .compact-thumb-wrap,
+  .compact-list-thumb {
+    width: 110px !important;
+    border-radius: 6px !important;
+  }
+  .compact-card-title,
+  .compact-list-title {
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+  }
+  .compact-card-channel,
+  .compact-list-channel {
+    font-size: 11px !important;
+  }
+  .compact-card-meta,
+  .compact-list-meta,
+  .compact-remaining-badge,
+  .compact-remaining-time {
+    font-size: 10px !important;
+  }
+  .compact-duration-badge {
+    font-size: 9px !important;
+    padding: 1px 3.5px !important;
+    bottom: 3px !important;
+    right: 3px !important;
+  }
+}
+
+@media (min-width: 351px) and (max-width: 400px) {
+  /* Screens around 360px - 390px */
+  .compact-video-card,
+  .compact-list-item {
+    gap: 10px !important;
+    padding: 7px 9px !important;
+  }
+  .compact-thumb-wrap,
+  .compact-list-thumb {
+    width: 124px !important;
+  }
+  .compact-card-title,
+  .compact-list-title {
+    font-size: 12.5px !important;
+    line-height: 1.3 !important;
+  }
+  .compact-card-channel,
+  .compact-list-channel {
+    font-size: 11.5px !important;
+  }
+  .compact-card-meta,
+  .compact-list-meta,
+  .compact-remaining-badge,
+  .compact-remaining-time {
+    font-size: 10.5px !important;
+  }
+}
+
+@media (min-width: 401px) and (max-width: 639px) {
+  /* Screens around 412px - 480px */
+  .compact-video-card,
+  .compact-list-item {
+    gap: 12px !important;
+    padding: 8px 10px !important;
+  }
+  .compact-thumb-wrap,
+  .compact-list-thumb {
+    width: 136px !important;
+  }
+  .compact-card-title,
+  .compact-list-title {
+    font-size: 13px !important;
+    line-height: 1.35 !important;
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1023px) {
+  /* Tablet */
+  .compact-video-card,
+  .compact-list-item {
+    gap: 14px !important;
+    padding: 9px 12px !important;
+  }
+  .compact-thumb-wrap,
+  .compact-list-thumb {
+    width: 160px !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  /* Desktop */
+  .compact-video-card,
+  .compact-list-item {
+    gap: 14px !important;
+    padding: 10px 12px !important;
+  }
+  .compact-thumb-wrap,
+  .compact-list-thumb {
+    width: 172px !important;
   }
 }
 

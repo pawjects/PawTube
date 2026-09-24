@@ -1,4 +1,4 @@
-const { requestPiped, normalizeMediaItem, sendResponse, sendError } = require('../_piped');
+const { requestPiped, normalizeMediaItem, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,9 +10,8 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const listId = url.searchParams.get('list') || url.searchParams.get('id') || '';
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
+  const { getParam, customInstance } = parseQueryParams(req);
+  const listId = getParam('list') || getParam('id') || '';
 
   if (!listId) {
     sendError(res, 400, 'INVALID_PLAYLIST_ID', 'Playlist list ID is required.');

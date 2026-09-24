@@ -1,4 +1,4 @@
-const { requestPiped, extractMediaId, sendResponse, sendError } = require('../_piped');
+const { requestPiped, extractMediaId, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,11 +10,10 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const rawId = url.searchParams.get('v') || url.searchParams.get('id') || '';
+  const { getParam, customInstance } = parseQueryParams(req);
+  const rawId = getParam('v') || getParam('id') || '';
   const videoId = extractMediaId(rawId);
-  const nextpage = url.searchParams.get('nextpage') || null;
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
+  const nextpage = getParam('nextpage');
 
   if (!videoId) {
     sendError(res, 400, 'INVALID_VIDEO_ID', 'A valid 11-character YouTube video ID is required.');

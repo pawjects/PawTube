@@ -5,10 +5,11 @@
 
 import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
-import { renderVideoCard, renderSkeletonCards, renderErrorState } from '../../components/video/videoCard.js';
-import { getHistory } from '../../storage/history/historyStorage.js';
+import { renderVideoCard, renderSkeletonCards, renderErrorState, renderCompactVideoCard } from '../../components/video/videoCard.js';
+import { getHistory, getContinueWatching } from '../../storage/history/historyStorage.js';
 import { getFollowedChannels, getPreferences } from '../../storage/preferences/preferencesStorage.js';
 import { rankFeedItems } from '../../storage/personalization/personalizationEngine.js';
+import { formatDuration } from '../../api/normalization/mediaModels.js';
 import { escapeHtml } from '../../utils/dom.js';
 
 const CATEGORIES = ['All', 'Following', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
@@ -36,27 +37,25 @@ export function filterHomeFeedItems(items) {
   return items.filter((item) => {
     if (!item || !item.id) return false;
 
-    // 1. Filter out YouTube Shorts
+    // 1. Filter out YouTube Shorts using authoritative metadata signals
     if (item.isShort === true) return false;
     if (item.type === 'short' || item.type === 'shorts') return false;
     if (item.url && item.url.includes('/shorts/')) return false;
     if (item.pawtubeUrl && item.pawtubeUrl.includes('/shorts/')) return false;
-    if (typeof item.duration === 'number' && item.duration > 0 && item.duration <= 75) {
-      return false;
-    }
     const titleLower = (item.title || '').toLowerCase();
     if (titleLower.includes('#shorts') || titleLower.includes('#short')) {
       return false;
     }
 
-    // 2. Filter out Live streams / broadcasts / premieres
+    // 2. Filter out Live streams / broadcasts / premieres using metadata
     if (item.isLive === true) return false;
     if (item.liveNow === true) return false;
     if (item.type === 'live' || item.type === 'livestream' || item.type === 'live_stream') return false;
-    if (typeof item.duration === 'number' && item.duration < 0) return false;
+    const durSec = item.durationSeconds !== undefined ? item.durationSeconds : item.duration;
+    if (typeof durSec === 'number' && durSec < 0) return false;
     const durStr = String(item.durationFormatted || '').toUpperCase();
     if (durStr === 'LIVE' || durStr.includes('LIVE')) return false;
-    if (item.badges && Array.isArray(item.badges) && item.badges.some((b) => String(b).toUpperCase().includes('LIVE'))) {
+    if (item.badges && Array.isArray(item.badges) && item.badges.some((b) => /LIVE|PREMIERE/i.test(String(b)))) {
       return false;
     }
 
@@ -77,7 +76,7 @@ export async function renderHomePage(container, options = {}) {
 
   const prefs = getPreferences();
   const history = getHistory();
-  const continueWatching = history.slice(0, 4);
+  const continueWatching = getContinueWatching().slice(0, 4);
   const followedChannels = getFollowedChannels();
   const currentRegion = (prefs.region || 'IN').toUpperCase();
 
@@ -108,28 +107,14 @@ export async function renderHomePage(container, options = {}) {
 
   if (continueWatching.length > 0 && activeCategory === 'All') {
     html += `
-      <div class="section-header">
+      <div class="section-header" style="margin-bottom:12px;">
         <h2 class="section-title">
-          <span class="material-symbols-rounded">history</span>
+          <span class="material-symbols-rounded" style="color:var(--brand-red);">play_circle</span>
           Continue Watching
         </h2>
       </div>
-      <div class="continue-watching-rail">
-        ${continueWatching.map((v) => `
-          <div class="continue-card" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}${v.progress ? `&t=${Math.floor(v.progress)}` : ''}'">
-            <div class="continue-thumb-wrap" style="position:relative;overflow:hidden;border-radius:10px;">
-              <img src="${escapeHtml(v.thumb || '')}" alt="${escapeHtml(v.title)}" loading="lazy" />
-              <div class="duration-badge">${escapeHtml(v.durationFormatted || (v.duration ? Math.floor(v.duration / 60) + ':' + (v.duration % 60 < 10 ? '0' : '') + (v.duration % 60) : '0:00'))}</div>
-              ${(v.progress && v.watchedPercentage) ? `
-                <div style="position:absolute;bottom:0;left:0;right:0;height:3.5px;background:rgba(255,255,255,0.25);">
-                  <div style="height:100%;background:var(--brand-red);width:${Math.min(100, Math.max(0, v.watchedPercentage))}%;"></div>
-                </div>
-              ` : ''}
-            </div>
-            <div class="card-title" style="font-size:13.5px;margin-top:6px;">${escapeHtml(v.title)}</div>
-            <div class="card-channel" style="font-size:12px;">${escapeHtml(v.channel || v.author || '')}</div>
-          </div>
-        `).join('')}
+      <div class="compact-video-grid" style="margin-bottom:28px;">
+        ${continueWatching.map((v) => renderCompactVideoCard(v, { isContinueWatching: true })).join('')}
       </div>
     `;
   }

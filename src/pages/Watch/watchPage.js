@@ -9,12 +9,13 @@ import { extractVideoId } from '../../player/videoId.js';
 import { playerController } from '../../player/player.js';
 import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
-import { addToHistory } from '../../storage/history/historyStorage.js';
+import { addToHistory, getHistory } from '../../storage/history/historyStorage.js';
 import { getPlaylists, addToPlaylist, removeFromPlaylist } from '../../storage/playlists/playlistStorage.js';
 import { isLiked, toggleLike } from '../../storage/likes/likesStorage.js';
 import { isSubscribed, toggleSubscription } from '../../storage/preferences/preferencesStorage.js';
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
+import { formatDuration } from '../../api/normalization/mediaModels.js';
 import { showPlaylistModal } from '../../components/video/playlistModal.js';
 import { showShareModal, shareYouTubeUrl, sharePawTubeUrl, openOnYouTube, copyToClipboard } from '../../components/video/shareModal.js';
 
@@ -46,14 +47,18 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
     return;
   }
 
-  // Initial video data reference
+  // Initial video data reference (populate from history cache if available)
+  const cachedVideo = getHistory().find((h) => h.id === cleanId);
+  const initialDurationSec = cachedVideo?.durationSeconds || cachedVideo?.duration || null;
   let currentVideoData = {
     id: cleanId,
-    title: 'YouTube Video',
-    channel: 'YouTube Channel',
-    author: 'YouTube Channel',
-    thumb: `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
-    durationFormatted: ''
+    title: cachedVideo?.title || 'YouTube Video',
+    channel: cachedVideo?.channel || cachedVideo?.author || 'YouTube Channel',
+    author: cachedVideo?.author || cachedVideo?.channel || 'YouTube Channel',
+    thumb: cachedVideo?.thumb || `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
+    durationSeconds: initialDurationSec,
+    duration: initialDurationSec || 0,
+    durationFormatted: cachedVideo?.durationFormatted || (initialDurationSec ? formatDuration(initialDurationSec) : '')
   };
 
   // Check initial local states
@@ -232,7 +237,7 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
         document.body.classList.add('theatre-mode-active');
       }
     }
-    playerController.attachToWatch(playerSlot, cleanId, null, startTime);
+    playerController.attachToWatch(playerSlot, cleanId, currentVideoData, startTime);
   }
 
   // ==========================================
@@ -531,17 +536,20 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
     if (currentSeq !== watchRenderSeq) return;
 
     // Cache metadata into videoData object
+    const durSec = videoData.durationSeconds !== undefined ? videoData.durationSeconds : videoData.duration;
     currentVideoData = {
       id: cleanId,
       title: videoData.title || 'YouTube Video',
       channel: videoData.channel || videoData.author || 'YouTube Channel',
       author: videoData.channel || videoData.author || 'YouTube Channel',
       thumb: videoData.thumb || `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
-      durationFormatted: ''
+      durationSeconds: durSec,
+      duration: durSec || 0,
+      durationFormatted: videoData.durationFormatted || formatDuration(durSec)
     };
 
     // Update player controller with rich metadata
-    playerController.updateMetadata(videoData);
+    playerController.updateMetadata(currentVideoData);
 
     // Update title
     const titleEl = container.querySelector('#video-title');
@@ -579,20 +587,31 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
       }
     }
 
-    // Update history with full metadata
-    addToHistory({
-      id: cleanId,
-      title: videoData.title || 'YouTube Video',
-      channel: videoData.channel || videoData.author || '',
-      author: videoData.channel || videoData.author || '',
-      thumb: videoData.thumb || `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
-      durationFormatted: ''
-    });
-
     // Channel navigation hookup
     const rawChannelId = videoData.channelId || videoData.uploaderUrl || videoData.channel || videoData.author;
     const cleanChannelId = rawChannelId ? String(rawChannelId).replace(/^\/channel\//, '') : '';
     const channelTarget = cleanChannelId ? `#/channel/${encodeURIComponent(cleanChannelId)}` : '';
+
+    currentVideoData.channelId = cleanChannelId;
+    currentVideoData.category = videoData.category || '';
+    currentVideoData.tags = videoData.tags || [];
+
+    // Update history with full metadata
+    addToHistory({
+      id: cleanId,
+      title: currentVideoData.title,
+      channel: currentVideoData.channel,
+      author: currentVideoData.author,
+      channelId: cleanChannelId,
+      category: videoData.category || '',
+      tags: videoData.tags || [],
+      thumb: currentVideoData.thumb,
+      duration: currentVideoData.duration,
+      durationSeconds: currentVideoData.durationSeconds,
+      durationFormatted: currentVideoData.durationFormatted,
+      views: videoData.views || 0,
+      uploadedDate: videoData.uploadDate || ''
+    });
 
     if (channelTarget) {
       if (channelAvatarEl) {

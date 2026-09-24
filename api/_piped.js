@@ -6,8 +6,8 @@
 const DEFAULT_INSTANCES = [
   'https://pipedapi.ducks.party',
   'https://api.piped.private.coffee',
-  'https://api.piped.privacydev.net',
-  'https://piped-api.lunar.icu'
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.tokhmi.xyz'
 ];
 
 // In-memory cache for serverless execution reuse
@@ -116,7 +116,7 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 4000) {
  * Centralized Piped Request Engine
  */
 async function requestPiped(endpoint, params = {}, options = {}) {
-  const { customInstance = null, timeoutMs = 2800, ttlMs = 45000, skipCache = false } = options;
+  const { customInstance = null, timeoutMs = 6500, ttlMs = 45000, skipCache = false } = options;
 
   const queryString = new URLSearchParams(params).toString();
   const cacheKey = `${endpoint}?${queryString}&custom=${customInstance || ''}`;
@@ -200,16 +200,26 @@ function markFailure(url) {
 }
 
 // Media normalization utilities
+function normalizeDurationSeconds(raw) {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const num = typeof raw === 'number' ? raw : parseFloat(String(raw).trim());
+  if (isNaN(num) || !isFinite(num)) return null;
+  if (num < 0) return null; // Live streams or invalid negative values
+  return Math.floor(num);
+}
+
 function formatDuration(seconds) {
-  if (seconds === undefined || seconds === null) return '0:00';
-  if (seconds < 0) return 'LIVE';
-  const num = Math.floor(Number(seconds)) || 0;
-  if (num <= 0) return '0:00';
-  const h = Math.floor(num / 3600);
-  const m = Math.floor((num % 3600) / 60);
-  const s = num % 60;
-  if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  return `${m}:${s.toString().padStart(2, '0')}`;
+  const sec = normalizeDurationSeconds(seconds);
+  if (sec === null || sec < 0) return '00:00';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const padM = String(m).padStart(2, '0');
+  const padS = String(s).padStart(2, '0');
+  if (h > 0) {
+    return `${h}:${padM}:${padS}`;
+  }
+  return `${padM}:${padS}`;
 }
 
 function formatViews(views) {
@@ -277,8 +287,36 @@ function normalizeMediaItem(raw) {
   const id = extractMediaId(raw.id || raw.videoId || raw.url);
   if (!id || id.length !== 11 || !raw.title) return null;
 
-  const duration = typeof raw.duration === 'number' ? raw.duration : (parseInt(raw.duration, 10) || 0);
+  const durationSeconds = normalizeDurationSeconds(
+    raw.durationSeconds !== undefined ? raw.durationSeconds : raw.duration
+  );
+  const rawDuration = typeof raw.duration === 'number' ? raw.duration : (parseInt(raw.duration, 10) || 0);
   const views = typeof raw.views === 'number' ? raw.views : (parseInt(String(raw.views || '').replace(/[^0-9]/g, ''), 10) || 0);
+
+  // Authoritative live stream detection using metadata signals
+  const isLive = Boolean(
+    raw.isLive === true ||
+    raw.liveNow === true ||
+    raw.live === true ||
+    raw.type === 'live' ||
+    raw.type === 'livestream' ||
+    raw.type === 'live_stream' ||
+    raw.streamType === 'live' ||
+    raw.videoType === 'live' ||
+    rawDuration < 0 ||
+    (raw.uploadedDate === null && raw.uploaded === -1) ||
+    (raw.badges && Array.isArray(raw.badges) && raw.badges.some((b) => /LIVE|PREMIERE/i.test(String(b))))
+  );
+
+  // Authoritative short detection using multiple metadata signals
+  const isShort = Boolean(
+    raw.isShort === true ||
+    raw.type === 'short' ||
+    raw.type === 'shorts' ||
+    (raw.url && raw.url.includes('/shorts/')) ||
+    (raw.badges && Array.isArray(raw.badges) && raw.badges.some((b) => /SHORTS?/i.test(String(b)))) ||
+    (durationSeconds !== null && durationSeconds > 0 && durationSeconds <= 60 && /#shorts?\b/i.test(raw.title || ''))
+  );
 
   return {
     id,
@@ -290,16 +328,17 @@ function normalizeMediaItem(raw) {
     channelId: raw.channelId || raw.authorId || (raw.uploaderUrl ? raw.uploaderUrl.replace(/^\/channel\//, '') : ''),
     thumb: raw.thumb || raw.thumbnail || raw.thumbnailUrl || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
     avatar: raw.avatar || raw.authorAvatar || raw.uploaderAvatar || '',
-    duration,
-    durationFormatted: raw.durationFormatted || formatDuration(duration),
+    durationSeconds,
+    duration: durationSeconds !== null ? durationSeconds : 0,
+    durationFormatted: raw.durationFormatted || formatDuration(durationSeconds),
     views,
     viewsFormatted: raw.viewsFormatted || formatViews(views),
     uploadedDate: raw.uploadedDate || raw.uploadDate || raw.uploaded || '',
     publishedTime: raw.publishedTime || raw.uploadedDate || '',
     uploadedFormatted: raw.uploadedFormatted || formatUploadedDate(raw.uploadedDate || raw.uploadDate || raw.uploaded || raw.publishedTime),
-    isShort: Boolean(raw.isShort || (duration > 0 && duration <= 75)),
-    isLive: Boolean(raw.isLive || duration < 0),
-    type: raw.type || 'video'
+    isShort,
+    isLive,
+    type: isLive ? 'live' : (isShort ? 'short' : (raw.type || 'video'))
   };
 }
 
@@ -320,16 +359,34 @@ function sendError(res, statusCode, error, message) {
   });
 }
 
+function parseQueryParams(req) {
+  const host = (req && req.headers && req.headers.host) || 'localhost';
+  const rawUrl = (req && req.url) || '/';
+  const parsed = new URL(rawUrl, `http://${host}`);
+  const customInstance = (req && req.query && req.query.custom) || parsed.searchParams.get('custom') || (req && req.headers && req.headers['x-custom-instance']) || null;
+  return {
+    parsedUrl: parsed,
+    searchParams: parsed.searchParams,
+    customInstance,
+    getParam: (key, fallback = null) => {
+      const val = (req && req.query && req.query[key] !== undefined) ? req.query[key] : parsed.searchParams.get(key);
+      return val !== null && val !== undefined ? val : fallback;
+    }
+  };
+}
+
 module.exports = {
   DEFAULT_INSTANCES,
   requestPiped,
   instanceStats,
   isValidPipedHost,
   extractMediaId,
+  normalizeDurationSeconds,
   normalizeMediaItem,
   formatDuration,
   formatViews,
   formatUploadedDate,
   sendResponse,
-  sendError
+  sendError,
+  parseQueryParams
 };

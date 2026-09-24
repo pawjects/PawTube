@@ -1,4 +1,4 @@
-const { requestPiped, normalizeMediaItem, sendResponse, sendError } = require('../_piped');
+const { requestPiped, normalizeMediaItem, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,10 +10,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const q = (url.searchParams.get('q') || '').trim();
-  const filter = url.searchParams.get('filter') || 'all';
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
+  const { getParam, customInstance } = parseQueryParams(req);
+  const q = (getParam('q') || '').trim();
+  const filter = getParam('filter', 'all');
 
   if (!q) {
     sendError(res, 400, 'INVALID_QUERY', 'Search query "q" parameter is required.');

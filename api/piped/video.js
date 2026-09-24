@@ -1,4 +1,4 @@
-const { requestPiped, extractMediaId, normalizeMediaItem, sendResponse, sendError } = require('../_piped');
+const { requestPiped, extractMediaId, normalizeMediaItem, normalizeDurationSeconds, formatDuration, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,10 +10,9 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const rawId = url.searchParams.get('v') || url.searchParams.get('id') || '';
+  const { getParam, customInstance } = parseQueryParams(req);
+  const rawId = getParam('v') || getParam('id') || '';
   const videoId = extractMediaId(rawId);
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
 
   if (!videoId) {
     sendError(res, 400, 'INVALID_VIDEO_ID', 'A valid 11-character YouTube video ID is required.');
@@ -28,6 +27,7 @@ module.exports = async function handler(req, res) {
       ? data.relatedStreams.map(normalizeMediaItem).filter(Boolean)
       : [];
 
+    const durationSeconds = normalizeDurationSeconds(data.duration);
     const likes = (typeof data.likes === 'number' && data.likes >= 0) ? data.likes : null;
     const views = (typeof data.views === 'number' && data.views >= 0) ? data.views : null;
 
@@ -40,7 +40,9 @@ module.exports = async function handler(req, res) {
       channelId: data.uploaderUrl ? data.uploaderUrl.replace(/^\/channel\//, '') : '',
       avatar: data.uploaderAvatar || '',
       thumb: data.thumbnailUrl || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      duration: data.duration || 0,
+      durationSeconds,
+      duration: durationSeconds !== null ? durationSeconds : 0,
+      durationFormatted: formatDuration(durationSeconds),
       views,
       likes,
       dislikes: typeof data.dislikes === 'number' ? data.dislikes : null,
@@ -53,7 +55,43 @@ module.exports = async function handler(req, res) {
       cached: result.cached
     });
   } catch (err) {
-    // oEmbed fallback for metadata
+    // Fallback 1: Query Piped Search which often has complete metadata even when /streams fails
+    try {
+      const searchRes = await requestPiped('/search', { q: videoId, filter: 'videos' }, { customInstance, ttlMs: 60000 });
+      const items = (searchRes.data?.items || []).map(normalizeMediaItem).filter(Boolean);
+      const match = items.find((i) => i.id === videoId);
+
+      if (match) {
+        sendResponse(res, 200, {
+          id: videoId,
+          title: match.title || 'YouTube Video',
+          description: '',
+          channel: match.channel || 'YouTube Channel',
+          author: match.author || 'YouTube Channel',
+          channelId: match.channelId || '',
+          avatar: match.avatar || '',
+          thumb: match.thumb || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          durationSeconds: match.durationSeconds,
+          duration: match.duration,
+          durationFormatted: match.durationFormatted,
+          views: match.views,
+          likes: null,
+          dislikes: null,
+          uploadDate: match.uploadedDate || '',
+          videoStreams: [],
+          audioStreams: [],
+          subtitles: [],
+          related: items.filter((i) => i.id !== videoId),
+          fallback: true,
+          instance: searchRes.instance
+        });
+        return;
+      }
+    } catch {
+      // Continue to oEmbed fallback
+    }
+
+    // Fallback 2: oEmbed for basic title and channel
     try {
       const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, {
         signal: AbortSignal.timeout(3000)
@@ -69,7 +107,9 @@ module.exports = async function handler(req, res) {
           channelId: meta.author_url ? meta.author_url.split('/').pop() : '',
           avatar: '',
           thumb: meta.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+          durationSeconds: null,
           duration: 0,
+          durationFormatted: '00:00',
           views: null,
           likes: null,
           uploadDate: '',
@@ -85,7 +125,7 @@ module.exports = async function handler(req, res) {
       // Fallback below
     }
 
-    // Default basic video metadata fallback
+    // Fallback 3: Default basic video metadata
     sendResponse(res, 200, {
       id: videoId,
       title: 'YouTube Video',
@@ -95,7 +135,9 @@ module.exports = async function handler(req, res) {
       channelId: '',
       avatar: '',
       thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      durationSeconds: null,
       duration: 0,
+      durationFormatted: '00:00',
       views: null,
       likes: null,
       uploadDate: '',

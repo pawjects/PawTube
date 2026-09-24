@@ -15,10 +15,11 @@ import {
   exportAllUserData,
   clearAllLocalUserData
 } from '../../storage/preferences/preferencesStorage.js';
-import { getHistory, clearHistory, removeFromHistory } from '../../storage/history/historyStorage.js';
+import { getHistory, clearHistory, removeFromHistory, getContinueWatching } from '../../storage/history/historyStorage.js';
 import { getPlaylists } from '../../storage/playlists/playlistStorage.js';
 import { getLikedVideos } from '../../storage/likes/likesStorage.js';
 import { getRecentSearches, clearRecentSearches } from '../../storage/personalization/personalizationEngine.js';
+import { renderCompactVideoCard, renderCompactEmptyState } from '../../components/video/compactVideoCard.js';
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
 
@@ -57,12 +58,8 @@ export function renderYouPage(container) {
   const watchLaterPlaylist = playlists.find((p) => p.id === 'watch-later');
   const watchLaterCount = (watchLaterPlaylist?.items || []).length;
 
-  // Continue watching: videos with progress >= 5s and not practically finished
-  const continueWatching = history.filter((v) => {
-    const prog = v.progress || 0;
-    const dur = v.duration || 0;
-    return prog >= 5 && (dur === 0 || prog < dur - 10);
-  });
+  // Continue watching: videos actively in progress
+  const continueWatching = getContinueWatching();
 
   const greeting = getGreeting();
 
@@ -187,44 +184,32 @@ export function renderYouPage(container) {
         </div>
 
         <!-- Continue Watching Shelf -->
-        ${continueWatching.length > 0 ? `
-          <div class="settings-card" style="padding:20px;background:var(--bg-surface);border-radius:18px;border:1px solid var(--glass-border);margin-bottom:16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
-              <h4 style="font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;margin:0;color:var(--text-primary);">
-                <span class="material-symbols-rounded" style="color:var(--brand-red);">play_circle</span>
-                Continue Watching
-              </h4>
+        <div class="settings-card you-shelf-card" style="padding:20px;background:var(--bg-surface);border-radius:18px;border:1px solid var(--glass-border);margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+            <h4 style="font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;margin:0;color:var(--text-primary);">
+              <span class="material-symbols-rounded" style="color:var(--brand-red);">play_circle</span>
+              Continue Watching
+            </h4>
+            ${continueWatching.length > 0 ? `
               <span style="font-size:12px;color:var(--text-secondary);">${continueWatching.length} in progress</span>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(210px, 1fr));gap:14px;">
-              ${continueWatching.slice(0, 4).map((v) => {
-                const resumeTime = Math.floor(v.progress || 0);
-                const pct = v.watchedPercentage || (v.duration ? Math.min(100, Math.round((resumeTime / v.duration) * 100)) : 0);
-                return `
-                  <div class="continue-you-card" style="cursor:pointer;background:var(--bg-elevated);border-radius:12px;overflow:hidden;border:1px solid var(--glass-border-light);transition:transform 0.15s;" onclick="window.location.hash='#/watch?v=${encodeURIComponent(v.id)}&t=${resumeTime}'">
-                    <div style="position:relative;width:100%;aspect-ratio:16/9;background:#000;">
-                      <img src="${escapeHtml(v.thumb || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`)}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy" />
-                      <div style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,0.85);color:#fff;font-size:11px;padding:2px 6px;border-radius:4px;font-weight:600;display:flex;align-items:center;gap:4px;">
-                        <span class="material-symbols-rounded" style="font-size:13px;color:var(--brand-red);">play_arrow</span>
-                        Resume ${formatTimestamp(resumeTime)}
-                      </div>
-                      <div style="position:absolute;bottom:0;left:0;right:0;height:3.5px;background:rgba(255,255,255,0.25);">
-                        <div style="height:100%;background:var(--brand-red);width:${pct}%;"></div>
-                      </div>
-                    </div>
-                    <div style="padding:10px 12px;">
-                      <h4 style="font-size:13.5px;font-weight:600;line-height:1.3;max-height:36px;overflow:hidden;margin:0 0 4px 0;color:var(--text-primary);">${escapeHtml(v.title || 'Video')}</h4>
-                      <p style="font-size:12px;color:var(--text-secondary);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(v.channel || v.author || '')}</p>
-                    </div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
+            ` : ''}
           </div>
-        ` : ''}
+
+          ${continueWatching.length > 0 ? `
+            <div class="compact-video-grid">
+              ${continueWatching.slice(0, 6).map((v) => renderCompactVideoCard(v, { isContinueWatching: true })).join('')}
+            </div>
+          ` : `
+            ${renderCompactEmptyState({
+              icon: 'play_circle',
+              title: 'Nothing to continue yet',
+              description: 'Videos you pause or watch partially will appear here so you can pick up where you left off.'
+            })}
+          `}
+        </div>
 
         <!-- Watch History Shelf -->
-        <div class="settings-card" id="history-section" style="padding:20px;background:var(--bg-surface);border-radius:18px;border:1px solid var(--glass-border);">
+        <div class="settings-card you-shelf-card" id="history-section" style="padding:20px;background:var(--bg-surface);border-radius:18px;border:1px solid var(--glass-border);">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
             <h4 style="font-size:15.5px;font-weight:600;display:flex;align-items:center;gap:8px;margin:0;color:var(--text-primary);">
               <span class="material-symbols-rounded" style="color:var(--brand-blue);">history</span>
@@ -239,30 +224,15 @@ export function renderYouPage(container) {
           </div>
 
           ${history.length > 0 ? `
-            <div style="display:flex;flex-direction:column;gap:10px;max-height:320px;overflow-y:auto;padding-right:4px;">
-              ${history.slice(0, 10).map((item) => `
-                <div style="display:flex;align-items:center;gap:12px;padding:8px;border-radius:10px;background:var(--bg-elevated);border:1px solid var(--glass-border-light);">
-                  <div style="width:104px;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:#000;flex-shrink:0;cursor:pointer;position:relative;" onclick="window.location.hash='#/watch?v=${encodeURIComponent(item.id)}${item.progress ? `&t=${Math.floor(item.progress)}` : ''}'">
-                    <img src="${escapeHtml(item.thumb || `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`)}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy" />
-                    ${item.watchedPercentage ? `
-                      <div style="position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,0.3);">
-                        <div style="height:100%;background:var(--brand-red);width:${item.watchedPercentage}%;"></div>
-                      </div>
-                    ` : ''}
-                  </div>
-                  <div style="flex:1;min-width:0;cursor:pointer;" onclick="window.location.hash='#/watch?v=${encodeURIComponent(item.id)}${item.progress ? `&t=${Math.floor(item.progress)}` : ''}'">
-                    <h4 style="font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0 0 2px 0;color:var(--text-primary);">${escapeHtml(item.title || 'Video')}</h4>
-                    <p style="font-size:12px;color:var(--text-secondary);margin:0;">${escapeHtml(item.channel || item.author || '')}</p>
-                    ${item.progress ? `<p style="font-size:11.5px;color:var(--brand-blue);margin:3px 0 0 0;">Watched to ${formatTimestamp(item.progress)}</p>` : ''}
-                  </div>
-                  <button class="remove-history-item-btn" type="button" data-video-id="${escapeHtml(item.id)}" title="Remove item" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:transparent;border:none;color:var(--text-tertiary);cursor:pointer;border-radius:50%;">
-                    <span class="material-symbols-rounded" style="font-size:18px;">close</span>
-                  </button>
-                </div>
-              `).join('')}
+            <div class="compact-video-grid">
+              ${history.slice(0, 8).map((item) => renderCompactVideoCard(item, { isContinueWatching: false, showRemoveButton: true, showHistoryMetadata: true })).join('')}
             </div>
           ` : `
-            <p style="font-size:13.5px;color:var(--text-secondary);margin:0;">No videos in watch history yet.</p>
+            ${renderCompactEmptyState({
+              icon: 'history',
+              title: 'Your watch history is empty',
+              description: 'Videos you watch will be saved here so you can easily revisit them.'
+            })}
           `}
         </div>
       </div>

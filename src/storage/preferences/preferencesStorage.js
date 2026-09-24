@@ -17,13 +17,15 @@ export const DEFAULT_PREFS = {
   liquidGlass: true,
   reducedMotion: false,
 
-  // PRIVACY
+  // PRIVACY & PERSONALIZATION
   historyEnabled: true,
   searchHistoryEnabled: true,
   personalizationEnabled: true,
+  useWatchHistoryForRecommendations: true,
 
-  // FEED
-  region: 'IN', // 'IN' | 'US' | 'GB' | 'DE' | 'JP' | 'FR' | 'CA'
+  // FEED & REGION (Default: India & Hindi)
+  region: 'IN', // 'IN' | 'US' | 'GB' | 'DE' | 'JP' | 'FR' | 'CA' | 'AU' | 'BR'
+  language: 'hi', // 'hi' | 'en' | 'bn' | 'ta' | 'te' | 'mr' | 'es' | 'ja'
   freshFeed: true,
   hideShorts: false,
   hideLive: false,

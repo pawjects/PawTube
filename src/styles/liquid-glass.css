@@ -819,6 +819,374 @@ body:has(textarea:focus) .bottom-nav {
 }
 
 /* ==========================================================================
+   Compact Horizontal List View (Continue Watching & Watch History)
+   ========================================================================== */
+.compact-video-grid,
+.compact-video-list {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+@media (min-width: 1024px) {
+  .compact-video-grid,
+  .compact-video-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+.compact-video-card,
+.compact-list-item {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  position: relative;
+  border-radius: var(--radius-sm, 12px);
+  background: var(--bg-surface, #101010);
+  border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.1));
+  overflow: hidden;
+  cursor: pointer;
+  min-width: 0;
+  box-sizing: border-box;
+  outline: none;
+  padding: 8px 10px;
+  gap: 12px;
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s ease,
+              background 0.2s ease;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Polished Desktop Hover Effects (150-250ms) */
+@media (hover: hover) and (pointer: fine) {
+  .compact-video-card:hover,
+  .compact-list-item:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.24);
+    background: var(--bg-elevated, rgba(255, 255, 255, 0.06));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  }
+
+  .compact-video-card:hover .compact-thumb-wrap img,
+  .compact-list-item:hover .compact-list-thumb img {
+    transform: scale(1.04);
+  }
+
+  .compact-video-card:hover .compact-thumb-play-overlay,
+  .compact-list-item:hover .compact-thumb-play-overlay {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+.compact-video-card:focus-visible,
+.compact-list-item:focus-visible {
+  outline: 2px solid var(--brand-blue, #3ea6ff);
+  outline-offset: 2px;
+}
+
+/* Touch Active Feedback */
+.compact-video-card:active,
+.compact-list-item:active {
+  transform: scale(0.985);
+  transition-duration: 0.08s;
+}
+
+/* 16:9 Thumbnail on the LEFT, responsive width, no fixed excessive heights */
+.compact-thumb-wrap,
+.compact-list-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 130px;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  overflow: hidden;
+  background: #000;
+  border-radius: 8px;
+}
+
+.compact-thumb-wrap img,
+.compact-list-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.25s ease-out;
+}
+
+/* Desktop Play Affordance Overlay */
+.compact-thumb-play-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 2;
+}
+
+.compact-thumb-play-overlay .material-symbols-rounded {
+  font-size: 20px;
+  margin-left: 2px;
+}
+
+/* Duration badge on thumbnail */
+.compact-duration-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  z-index: 2;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* Playback Progress Indicator along bottom of thumbnail */
+.compact-progress-track {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.25);
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.compact-progress-fill {
+  height: 100%;
+  background: var(--brand-red, #ff334b) !important;
+  transition: width 0.2s ease-out;
+}
+
+/* Title row with title + optional remove button */
+.compact-card-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+}
+
+/* Remove button for history item */
+.compact-card-remove-btn,
+.compact-list-remove-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: -2px -2px 0 0;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.compact-card-remove-btn .material-symbols-rounded,
+.compact-list-remove-btn .material-symbols-rounded {
+  font-size: 16px;
+}
+
+.compact-card-remove-btn:hover,
+.compact-list-remove-btn:hover {
+  color: var(--brand-red, #ff334b);
+  background: rgba(255, 51, 75, 0.12);
+  transform: scale(1.1);
+}
+
+/* Card Body / Metadata on the RIGHT */
+.compact-card-info,
+.compact-list-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  flex: 1;
+  min-width: 0;
+  gap: 3px;
+  box-sizing: border-box;
+  justify-content: flex-start;
+}
+
+.compact-card-title,
+.compact-list-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  word-break: break-word;
+}
+
+.compact-card-channel,
+.compact-list-channel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-channel-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compact-card-channel:hover,
+.compact-list-channel:hover {
+  color: var(--text-primary);
+}
+
+.compact-card-meta,
+.compact-list-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.compact-card-meta .meta-dot,
+.compact-list-meta .meta-dot {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Continue Watching Progress Row */
+.compact-list-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  flex-wrap: nowrap;
+}
+
+.compact-inline-progress-track {
+  flex: 1;
+  max-width: 100px;
+  min-width: 50px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.compact-inline-progress-fill {
+  height: 100%;
+  background: var(--brand-red, #ff334b) !important;
+  border-radius: 2px;
+}
+
+.compact-remaining-badge,
+.compact-remaining-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand-red, #ff334b);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.compact-history-progress-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* Compact Empty State */
+.compact-empty-state {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--bg-surface, #101010);
+  border-radius: var(--radius-sm, 12px);
+  border: 1px solid var(--glass-border-light, rgba(255, 255, 255, 0.1));
+  box-sizing: border-box;
+}
+
+.compact-empty-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.compact-empty-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.compact-empty-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+
+/* ==========================================================================
    Video Grid & Video Cards
    ========================================================================== */
 .video-grid {

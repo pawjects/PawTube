@@ -5,7 +5,7 @@
 import { getHistory, clearHistory, removeFromHistory } from '../../storage/history/historyStorage.js';
 import { getPlaylists, createPlaylist, deletePlaylist } from '../../storage/playlists/playlistStorage.js';
 import { getFollowedChannels } from '../../storage/preferences/preferencesStorage.js';
-import { renderVideoCard } from '../../components/video/videoCard.js';
+import { renderCompactVideoCard, renderCompactEmptyState } from '../../components/video/compactVideoCard.js';
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
 
@@ -58,12 +58,16 @@ export function renderLibraryPage(container) {
       </div>
 
       ${history.length > 0 ? `
-        <div class="video-grid" style="margin-bottom:40px;">
-          ${history.slice(0, 12).map(renderVideoCard).join('')}
+        <div class="compact-video-grid" style="margin-bottom:40px;">
+          ${history.slice(0, 16).map((item) => renderCompactVideoCard(item, { isContinueWatching: false, showRemoveButton: true, showHistoryMetadata: true })).join('')}
         </div>
       ` : `
-        <div style="padding:32px;text-align:center;color:var(--text-secondary);background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border-light);margin-bottom:40px;">
-          <p>No watch history yet. Videos you watch will appear here.</p>
+        <div style="margin-bottom:40px;">
+          ${renderCompactEmptyState({
+            icon: 'history',
+            title: 'Your watch history is empty',
+            description: 'Videos you watch will appear here so you can easily revisit them.'
+          })}
         </div>
       `}
 
@@ -123,6 +127,17 @@ export function renderLibraryPage(container) {
       showToast('History cleared', 'info');
       renderLibraryPage(container);
     }
+  });
+
+  // Bind remove single history item
+  container.querySelectorAll('.remove-history-item-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.getAttribute('data-video-id');
+      removeFromHistory(id);
+      showToast('Removed from history', 'info');
+      renderLibraryPage(container);
+    });
   });
 
   // Bind new playlist

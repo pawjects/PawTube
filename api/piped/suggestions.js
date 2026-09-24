@@ -1,4 +1,4 @@
-const { requestPiped, sendResponse, sendError } = require('../_piped');
+const { requestPiped, sendResponse, sendError, parseQueryParams } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -10,9 +10,8 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const query = (url.searchParams.get('q') || '').trim();
-  const customInstance = url.searchParams.get('custom') || req.headers['x-custom-instance'] || null;
+  const { getParam, customInstance } = parseQueryParams(req);
+  const query = (getParam('q') || '').trim();
 
   if (!query) {
     sendResponse(res, 200, { suggestions: [] });

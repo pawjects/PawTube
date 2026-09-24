@@ -1,7 +1,11 @@
 /**
  * PawTube - Client-Side Personalization Engine
- * Lightweight local preference scoring without any external server or database.
- * Pipeline: Piped India Content -> Normalize -> Local Relevance Score -> Deduplication -> Filter Recently Finished -> Render
+ * Lightweight local preference scoring without any external server or telemetry.
+ * Non-AI heuristic ranking using locally stored user signals:
+ * - Watch history & completion rates
+ * - Subscribed/followed channels
+ * - Liked videos & playlists
+ * - Recent search queries & topics
  */
 
 import { getHistory } from '../history/historyStorage.js';
@@ -10,12 +14,13 @@ import { getSubscriptions, getPreferences } from '../preferences/preferencesStor
 import { getLikedVideos } from '../likes/likesStorage.js';
 
 const SEARCH_HISTORY_KEY = 'pawtube_recent_searches';
-const MAX_SEARCHES = 15;
+const MAX_SEARCHES = 20;
 
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'this', 'that', 'from', 'your', 'video', 'official',
   'music', 'full', 'song', 'hd', '4k', 'remastered', 'feat', 'ft', 'live', 'episode',
-  'part', 'new', 'best', '2024', '2025', '2026', 'lyrics', 'audio', 'teaser', 'trailer'
+  'part', 'new', 'best', '2024', '2025', '2026', 'lyrics', 'audio', 'teaser', 'trailer',
+  'hindi', 'india', 'desi', 'trending', 'today', 'latest', 'shorts', 'short', 'status'
 ]);
 
 export function recordSearchQuery(query) {
@@ -29,6 +34,7 @@ export function recordSearchQuery(query) {
   try {
     const raw = localStorage.getItem(SEARCH_HISTORY_KEY);
     let list = raw ? JSON.parse(raw) : [];
+    // Deduplicate and move to top
     list = [clean, ...list.filter((q) => q !== clean)].slice(0, MAX_SEARCHES);
     localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(list));
   } catch {}
@@ -57,85 +63,7 @@ export function removeRecentSearch(query) {
   } catch {}
 }
 
-/**
- * Build lightweight local user preference weights based on:
- * - Watch history (channels, topics, watch completion rate)
- * - Liked videos
- * - Saved playlists
- * - Subscribed channels
- * - Recent search queries
- */
-export function buildUserProfile() {
-  const history = getHistory();
-  const playlists = getPlaylists();
-  const subs = getSubscriptions();
-  const searches = getRecentSearches();
-  const likes = getLikedVideos();
-
-  const channelWeights = new Map();
-  const keywordWeights = new Map();
-
-  // 1. Process Channel Subscriptions / Follows (strongest positive signal)
-  subs.forEach((s) => {
-    const name = (s.name || '').toLowerCase().trim();
-    const id = (s.id || '').toLowerCase().trim();
-    if (name) channelWeights.set(name, (channelWeights.get(name) || 0) + 35);
-    if (id) channelWeights.set(id, (channelWeights.get(id) || 0) + 35);
-  });
-
-  // 2. Process Liked Videos
-  likes.forEach((v) => {
-    const ch = (v.channel || v.author || '').toLowerCase().trim();
-    if (ch) channelWeights.set(ch, (channelWeights.get(ch) || 0) + 15);
-    extractKeywords(v.title || '').forEach((kw) => {
-      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 4);
-    });
-  });
-
-  // 3. Process Saved Playlists
-  playlists.forEach((pl) => {
-    (pl.videos || []).forEach((v) => {
-      const ch = (v.channel || v.author || '').toLowerCase().trim();
-      if (ch) channelWeights.set(ch, (channelWeights.get(ch) || 0) + 8);
-      extractKeywords(v.title || '').forEach((kw) => {
-        keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 3);
-      });
-    });
-  });
-
-  // 4. Process Watch History with completion rate awareness
-  history.forEach((h, idx) => {
-    const recencyMultiplier = Math.max(0.3, 1 - idx * 0.03); // More recent items have higher weight
-    const watchedPct = h.watchedPercentage || 0;
-    const engagementBoost = watchedPct >= 50 ? 1.5 : (watchedPct < 15 ? 0.5 : 1.0);
-
-    const ch = (h.channel || h.author || '').toLowerCase().trim();
-    if (ch) {
-      channelWeights.set(ch, (channelWeights.get(ch) || 0) + 6 * recencyMultiplier * engagementBoost);
-    }
-    extractKeywords(h.title || '').forEach((kw) => {
-      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 2 * recencyMultiplier * engagementBoost);
-    });
-  });
-
-  // 5. Process Recent Searches
-  searches.forEach((q, idx) => {
-    const recencyMultiplier = Math.max(0.4, 1 - idx * 0.05);
-    extractKeywords(q).forEach((kw) => {
-      keywordWeights.set(kw, (keywordWeights.get(kw) || 0) + 4 * recencyMultiplier);
-    });
-  });
-
-  const totalInteractions = history.length + subs.length + searches.length + likes.length;
-  return {
-    channelWeights,
-    keywordWeights,
-    hasEnoughHistory: totalInteractions >= 2,
-    history
-  };
-}
-
-function extractKeywords(text) {
+export function extractKeywords(text) {
   if (!text || typeof text !== 'string') return [];
   return text
     .toLowerCase()
@@ -145,99 +73,291 @@ function extractKeywords(text) {
 }
 
 /**
- * Personalized Feed Ranking Pipeline:
- * Deduplicate -> compute local relevance -> rank -> apply diversity guard -> balance with discovery
+ * Builds the structured local interest profile:
+ * {
+ *   channels: {},
+ *   topics: {},
+ *   categories: {},
+ *   recentSearches: [],
+ *   watchPatterns: {},
+ *   lastUpdated: ...
+ * }
+ */
+export function buildUserProfile() {
+  const history = getHistory();
+  const playlists = getPlaylists();
+  const subs = getSubscriptions();
+  const searches = getRecentSearches();
+  const likes = getLikedVideos();
+  const now = Date.now();
+
+  const channels = {};
+  const topics = {};
+  const categories = {};
+  const completedIds = new Set();
+  const inProgressIds = new Set();
+  const watchedVideoIds = new Set();
+
+  let totalWatchSeconds = 0;
+  let completionCount = 0;
+
+  // 1. Process Channel Subscriptions / Follows (strongest positive signal)
+  subs.forEach((s) => {
+    const chName = (s.name || '').toLowerCase().trim();
+    const chId = (s.id || '').toLowerCase().trim();
+    if (chName) {
+      channels[chName] = { weight: (channels[chName]?.weight || 0) + 40, isFollowed: true, count: (channels[chName]?.count || 0) + 1 };
+    }
+    if (chId && chId !== chName) {
+      channels[chId] = { weight: (channels[chId]?.weight || 0) + 40, isFollowed: true, count: (channels[chId]?.count || 0) + 1 };
+    }
+  });
+
+  // 2. Process Liked Videos
+  likes.forEach((v) => {
+    if (!v) return;
+    watchedVideoIds.add(v.id);
+    const ch = (v.channel || v.author || '').toLowerCase().trim();
+    if (ch) {
+      channels[ch] = {
+        weight: (channels[ch]?.weight || 0) + 18,
+        isFollowed: channels[ch]?.isFollowed || false,
+        count: (channels[ch]?.count || 0) + 1
+      };
+    }
+    extractKeywords(v.title || '').forEach((kw) => {
+      topics[kw] = (topics[kw] || 0) + 5;
+    });
+    if (v.category) {
+      const cat = String(v.category).toLowerCase().trim();
+      categories[cat] = (categories[cat] || 0) + 6;
+    }
+  });
+
+  // 3. Process Playlists / Watch Later
+  playlists.forEach((pl) => {
+    (pl.videos || pl.items || []).forEach((v) => {
+      if (!v) return;
+      const ch = (v.channel || v.author || '').toLowerCase().trim();
+      if (ch) {
+        channels[ch] = {
+          weight: (channels[ch]?.weight || 0) + 10,
+          isFollowed: channels[ch]?.isFollowed || false,
+          count: (channels[ch]?.count || 0) + 1
+        };
+      }
+      extractKeywords(v.title || '').forEach((kw) => {
+        topics[kw] = (topics[kw] || 0) + 3;
+      });
+    });
+  });
+
+  // 4. Process Watch History with completion rate awareness & recency
+  history.forEach((h, idx) => {
+    if (!h || !h.id) return;
+    watchedVideoIds.add(h.id);
+
+    const recencyMultiplier = Math.max(0.3, 1 - idx * 0.025);
+    const watchedPct = h.watchedPercentage || 0;
+    const isCompleted = Boolean(h.completed || watchedPct >= 90);
+
+    if (isCompleted) {
+      completedIds.add(h.id);
+      completionCount++;
+    } else if (watchedPct >= 10 && watchedPct < 90) {
+      inProgressIds.add(h.id);
+    }
+
+    if (h.progress) {
+      totalWatchSeconds += h.progress;
+    }
+
+    const engagementBoost = isCompleted ? 1.4 : (watchedPct >= 40 ? 1.2 : (watchedPct < 10 ? 0.4 : 0.9));
+    const ch = (h.channel || h.author || '').toLowerCase().trim();
+    if (ch) {
+      channels[ch] = {
+        weight: (channels[ch]?.weight || 0) + 8 * recencyMultiplier * engagementBoost,
+        isFollowed: channels[ch]?.isFollowed || false,
+        count: (channels[ch]?.count || 0) + 1,
+        lastWatched: h.watchedAt || now
+      };
+    }
+
+    extractKeywords(h.title || '').forEach((kw) => {
+      topics[kw] = (topics[kw] || 0) + 3 * recencyMultiplier * engagementBoost;
+    });
+
+    if (h.category) {
+      const cat = String(h.category).toLowerCase().trim();
+      categories[cat] = (categories[cat] || 0) + 4 * recencyMultiplier;
+    }
+  });
+
+  // 5. Process Recent Searches
+  searches.forEach((q, idx) => {
+    const recencyMultiplier = Math.max(0.4, 1 - idx * 0.04);
+    extractKeywords(q).forEach((kw) => {
+      topics[kw] = (topics[kw] || 0) + 5 * recencyMultiplier;
+    });
+  });
+
+  const totalInteractions = history.length + subs.length + searches.length + likes.length;
+
+  return {
+    channels,
+    topics,
+    categories,
+    recentSearches: searches,
+    watchPatterns: {
+      totalWatchedVideos: history.length,
+      completedVideos: completedIds,
+      inProgressVideos: inProgressIds,
+      allWatchedVideoIds: watchedVideoIds,
+      totalWatchedSeconds: totalWatchSeconds,
+      completionRate: history.length > 0 ? completionCount / history.length : 0,
+      lastWatchedTimestamp: history[0]?.watchedAt || 0
+    },
+    hasEnoughHistory: totalInteractions >= 2,
+    lastUpdated: now
+  };
+}
+
+/**
+ * Multi-Signal Feed Ranking:
+ * 1. Filter out live streams & shorts strictly
+ * 2. Deduplicate by video ID
+ * 3. Score candidates with positive and negative signals
+ * 4. Introduce non-deterministic diversity jitter
+ * 5. Apply channel diversity guard
  */
 export function rankFeedItems(rawItems) {
   if (!rawItems || !Array.isArray(rawItems) || rawItems.length === 0) {
     return [];
   }
 
-  // 1. Deduplicate items by ID
+  // Deduplicate items by ID
   const seenIds = new Set();
   const deduped = [];
   for (const item of rawItems) {
-    if (item && item.id && !seenIds.has(item.id)) {
-      seenIds.add(item.id);
-      deduped.push(item);
-    }
+    if (!item || !item.id || seenIds.has(item.id)) continue;
+    // Skip Shorts or Live
+    if (item.isShort === true || item.isLive === true) continue;
+    seenIds.add(item.id);
+    deduped.push(item);
   }
 
   const prefs = getPreferences();
-  if (prefs.personalizationEnabled === false) {
+  if (prefs.personalizationEnabled === false || prefs.useWatchHistoryForRecommendations === false) {
     return deduped;
   }
 
   const profile = buildUserProfile();
 
-  // If user has no interaction history, return original trending order
+  // If user has insufficient interactions, return the original fresh provider order
   if (!profile.hasEnoughHistory) {
     return deduped;
   }
 
-  // Build recently fully watched lookup (watched > 85% in the last 12 hours)
-  const recentlyCompleted = new Set();
-  const now = Date.now();
-  profile.history.forEach((h) => {
-    if (h.id && h.watchedAt && now - h.watchedAt < 12 * 3600 * 1000) {
-      if (h.watchedPercentage && h.watchedPercentage > 85) {
-        recentlyCompleted.add(h.id);
+  const { channels, topics, categories, watchPatterns, recentSearches } = profile;
+  const recentSearchesSet = new Set(recentSearches.map((s) => s.toLowerCase()));
+
+  // Score candidate items
+  const scored = deduped.map((item, index) => {
+    // Preserve natural discovery rank as solid base
+    const baseRankScore = (deduped.length - index) * 2.5;
+    let score = baseRankScore;
+
+    const chName = (item.channel || item.author || '').toLowerCase().trim();
+    const chId = (item.channelId || item.authorId || '').toLowerCase().trim();
+
+    // 1. Channel signal: Subscribed / Frequently watched
+    const channelProfile = channels[chName] || channels[chId];
+    if (channelProfile) {
+      if (channelProfile.isFollowed) {
+        score += 42; // Followed channel boost
+      }
+      // Frequently watched weight
+      score += Math.min(32, (channelProfile.weight || 0) * 1.2);
+    }
+
+    // 2. Matching recent search query
+    const titleLower = (item.title || '').toLowerCase();
+    for (const sq of recentSearchesSet) {
+      if (sq.length >= 3 && titleLower.includes(sq)) {
+        score += 24;
+        break;
       }
     }
-  });
 
-  // 2. Compute local relevance score for each item
-  const scored = deduped.map((item, index) => {
-    // Preserve natural discovery rank as base
-    const baseRankScore = (deduped.length - index) * 3;
-    let relevanceScore = 0;
-
-    const ch = (item.channel || item.author || '').toLowerCase().trim();
-    const chId = (item.channelId || item.authorId || (item.uploaderUrl ? item.uploaderUrl.replace(/^\/channel\//, '') : '')).toLowerCase().trim();
-    if (ch && profile.channelWeights.has(ch)) {
-      relevanceScore += Math.min(50, profile.channelWeights.get(ch) * 2.0);
-    } else if (chId && profile.channelWeights.has(chId)) {
-      relevanceScore += Math.min(50, profile.channelWeights.get(chId) * 2.0);
-    }
-
+    // 3. Matching recently watched topics/keywords
     const keywords = extractKeywords(item.title || '');
     let matchedKwScore = 0;
     keywords.forEach((kw) => {
-      if (profile.keywordWeights.has(kw)) {
-        matchedKwScore += profile.keywordWeights.get(kw) * 1.5;
+      if (topics[kw]) {
+        matchedKwScore += topics[kw] * 1.5;
       }
     });
-    relevanceScore += Math.min(35, matchedKwScore);
+    score += Math.min(28, matchedKwScore);
 
-    // Penalty if video was already completed recently to avoid repeating
-    if (recentlyCompleted.has(item.id)) {
-      relevanceScore -= 30;
+    // 4. Category match
+    if (item.category) {
+      const cat = String(item.category).toLowerCase().trim();
+      if (categories[cat]) {
+        score += Math.min(15, categories[cat] * 1.2);
+      }
     }
 
-    const finalScore = baseRankScore + relevanceScore;
-    return { item, finalScore, channel: ch || chId };
+    // 5. Fresh upload boost (within 48 hours)
+    const uploadedLower = (item.uploadedFormatted || item.uploadedDate || '').toLowerCase();
+    if (uploadedLower.includes('hour') || uploadedLower.includes('minute') || uploadedLower.includes('just now') || uploadedLower.includes('1 day ago')) {
+      score += 10;
+    }
+
+    // 6. Unseen content boost
+    if (!watchPatterns.allWatchedVideoIds.has(item.id)) {
+      score += 12;
+    }
+
+    // NEGATIVE SIGNALS:
+    // Penalty if already completed repeatedly/recently to prevent repetition
+    if (watchPatterns.completedVideos.has(item.id)) {
+      score -= 38;
+    }
+
+    // Demote in-progress videos slightly so Continue Watching shelf handles them and Home feed stays fresh
+    if (watchPatterns.inProgressVideos.has(item.id)) {
+      score -= 14;
+    }
+
+    // Add mild diversity jitter (+- 3.5 points) so the feed doesn't feel robotic or frozen
+    const jitter = (Math.random() - 0.5) * 7.0;
+    score += jitter;
+
+    return {
+      item,
+      finalScore: score,
+      channelKey: chName || chId || 'unknown'
+    };
   });
 
-  // 3. Sort by finalScore descending
+  // Sort descending by score
   scored.sort((a, b) => b.finalScore - a.finalScore);
 
-  // 4. Apply Channel Diversity Guard:
-  // Avoid more than 2 consecutive or 3 total items from the same channel in top 15
+  // Apply Channel Diversity Guard:
+  // Prevent any single creator from overwhelming the top 15 recommendations
   const ranked = [];
   const deferred = [];
   const channelCount = new Map();
 
   for (const s of scored) {
-    const chKey = s.channel || 'unknown';
-    const count = channelCount.get(chKey) || 0;
-    if (count >= 2 && ranked.length < 15) {
+    const count = channelCount.get(s.channelKey) || 0;
+    if (count >= 2 && ranked.length < 14) {
       deferred.push(s.item);
     } else {
-      channelCount.set(chKey, count + 1);
+      channelCount.set(s.channelKey, count + 1);
       ranked.push(s.item);
     }
   }
 
-  // Append any deferred items at the end
   return [...ranked, ...deferred];
 }
