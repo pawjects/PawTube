@@ -64,14 +64,63 @@ html.no-glass * {
   -webkit-backdrop-filter: none !important;
 }
 
-/* Midnight Theme Palette */
-html[data-theme="midnight"] {
-  --bg-primary: #070b14;
-  --bg-secondary: #0c1220;
-  --bg-surface: #121a2e;
-  --bg-elevated: rgba(255, 255, 255, 0.05);
-  --bg-hover: rgba(255, 255, 255, 0.09);
-  --bg-active: rgba(255, 255, 255, 0.14);
+/* Light Theme Palette & Adaptations */
+html[data-theme="light"] {
+  --bg-primary: #f8f9fa;
+  --bg-secondary: #f0f2f5;
+  --bg-surface: #ffffff;
+  --bg-elevated: rgba(0, 0, 0, 0.04);
+  --bg-hover: rgba(0, 0, 0, 0.07);
+  --bg-active: rgba(0, 0, 0, 0.11);
+  
+  --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.92) 0%, rgba(246, 248, 250, 0.85) 100%);
+  --glass-header: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 249, 251, 0.9) 100%);
+  --glass-bnav: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(246, 248, 250, 0.9) 100%);
+  --glass-surface: linear-gradient(135deg, rgba(255, 255, 255, 0.94) 0%, rgba(248, 250, 252, 0.86) 100%);
+  --glass-card: linear-gradient(135deg, rgba(0, 0, 0, 0.03) 0%, rgba(0, 0, 0, 0.01) 100%);
+  --glass-border: rgba(0, 0, 0, 0.12);
+  --glass-border-light: rgba(0, 0, 0, 0.06);
+  --glass-border-focus: rgba(2, 132, 199, 0.6);
+  
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --text-disabled: #94a3b8;
+  
+  --brand-color: #0284c7;
+  --brand-blue: #0284c7;
+  --brand-red: #e11d48;
+  --brand-green: #059669;
+  --brand-amber: #d97706;
+  --error: #dc2626;
+  
+  --shadow-glass: 0 8px 30px rgba(0, 0, 0, 0.07), inset 0 1px 1px rgba(255, 255, 255, 0.9);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-float: 0 12px 36px rgba(0, 0, 0, 0.12), inset 0 1px 1px rgba(255, 255, 255, 0.9);
+}
+
+/* Light Theme Element Adaptations */
+html[data-theme="light"] .logo-text {
+  background: linear-gradient(135deg, #0f172a 40%, #0284c7 100%) !important;
+  -webkit-background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18) !important;
+}
+
+html[data-theme="light"] input,
+html[data-theme="light"] select,
+html[data-theme="light"] textarea {
+  color: var(--text-primary);
+  background: var(--bg-surface);
+  border-color: var(--glass-border);
+}
+
+html[data-theme="light"] .skeleton-pulse {
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.05) 25%, rgba(0, 0, 0, 0.1) 37%, rgba(0, 0, 0, 0.05) 63%) !important;
+  background-size: 400% 100% !important;
 }
 
 /* Material Symbols Rounded */

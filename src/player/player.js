@@ -8,6 +8,15 @@ import { buildNoCookieEmbedUrl } from './embed.js';
 import { extractVideoId } from './videoId.js';
 import { addToHistory, updateHistoryProgress, markVideoCompleted } from '../storage/history/historyStorage.js';
 import { formatDuration } from '../api/normalization/mediaModels.js';
+import { getPreferences } from '../storage/preferences/preferencesStorage.js';
+
+function formatRemaining(totalSec) {
+  if (!totalSec || isNaN(totalSec) || totalSec <= 0) return '0:00';
+  const total = Math.floor(totalSec);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
 
 export class VideoPlayerController {
   constructor() {
@@ -85,6 +94,12 @@ export class VideoPlayerController {
     this.state.mode = mode;
     if (!this.host) return;
 
+    this.host.classList.add('mode-transitioning');
+    clearTimeout(this.modeTransitionTimeout);
+    this.modeTransitionTimeout = setTimeout(() => {
+      this.host?.classList.remove('mode-transitioning');
+    }, 280);
+
     this.host.classList.remove('mode-hidden', 'mode-watch', 'mode-mini');
     this.host.classList.add(`mode-${mode}`);
 
@@ -100,6 +115,7 @@ export class VideoPlayerController {
       this.host.style.width = '';
       this.host.style.height = '';
       this.syncMiniPlayerUI();
+      this.updateProgressUI();
     } else {
       this.host.style.top = '';
       this.host.style.left = '';
@@ -214,6 +230,14 @@ export class VideoPlayerController {
     if (this.state.currentVideoId) {
       updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
     }
+    try {
+      const prefs = getPreferences();
+      if (prefs && prefs.miniPlayerEnabled === false) {
+        this.pause();
+        this.setMode('hidden');
+        return;
+      }
+    } catch {}
     if (this.state.currentVideoId && this.state.mode === 'watch') {
       this.setMode('mini');
     }
@@ -245,6 +269,23 @@ export class VideoPlayerController {
     }
     this.pause();
     this.sendIframeCommand('stopVideo');
+
+    if (this.host && this.state.mode === 'mini') {
+      this.host.classList.add('mini-player-closing');
+      setTimeout(() => {
+        if (this.host) {
+          this.host.classList.remove('mini-player-closing');
+        }
+        this.state.currentVideoId = null;
+        this.state.currentMetadata = null;
+        this.state.currentTime = 0;
+        this.state.duration = 0;
+        this.iframe.src = 'about:blank';
+        this.setMode('hidden');
+      }, 200);
+      return;
+    }
+
     this.state.currentVideoId = null;
     this.state.currentMetadata = null;
     this.state.currentTime = 0;
@@ -298,24 +339,41 @@ export class VideoPlayerController {
 
     if (playPauseBtn) playPauseBtn.onclick = handleTogglePlay;
     if (centerPlay) centerPlay.onclick = handleTogglePlay;
-    if (miniPlayBtn) miniPlayBtn.onclick = handleTogglePlay;
 
-    // Mini player actions
+    // Mini player actions with strict stopPropagation to prevent unintended expansion
+    if (miniPlayBtn) {
+      const handleMiniPlay = (e) => {
+        e?.preventDefault();
+        e?.stopPropagation();
+        this.togglePlay();
+      };
+      miniPlayBtn.onclick = handleMiniPlay;
+      miniPlayBtn.ontouchstart = (e) => e?.stopPropagation();
+      miniPlayBtn.onpointerdown = (e) => e?.stopPropagation();
+    }
+
     if (miniCloseBtn) {
-      miniCloseBtn.onclick = (e) => {
-        e.stopPropagation();
+      const handleMiniClose = (e) => {
+        e?.preventDefault();
+        e?.stopPropagation();
         this.closeMiniPlayer();
       };
+      miniCloseBtn.onclick = handleMiniClose;
+      miniCloseBtn.ontouchstart = (e) => e?.stopPropagation();
+      miniCloseBtn.onpointerdown = (e) => e?.stopPropagation();
     }
 
     if (miniExpandTap) {
-      miniExpandTap.onclick = () => this.expandToWatch();
+      miniExpandTap.onclick = (e) => {
+        e?.stopPropagation();
+        this.expandToWatch();
+      };
     }
 
     if (playerMediaBox) {
       playerMediaBox.onclick = (e) => {
         if (this.state.mode === 'mini') {
-          e.stopPropagation();
+          e?.stopPropagation();
           this.expandToWatch();
         }
       };
@@ -880,7 +938,17 @@ export class VideoPlayerController {
     const meta = this.state.currentMetadata;
 
     if (titleEl) titleEl.textContent = meta?.title || 'Playing Video';
-    if (channelEl) channelEl.textContent = meta?.author || meta?.channel || 'YouTube';
+    if (channelEl) {
+      const channelName = meta?.author || meta?.channel || 'YouTube';
+      const duration = this.state.duration;
+      const currentTime = this.state.currentTime;
+      const remSec = (duration > 0 && currentTime >= 0) ? Math.max(0, duration - currentTime) : 0;
+      if (remSec > 0) {
+        channelEl.textContent = `${channelName} • ${formatRemaining(remSec)} remaining`;
+      } else {
+        channelEl.textContent = channelName;
+      }
+    }
     this.syncPlayStateUI();
   }
 
@@ -909,6 +977,19 @@ export class VideoPlayerController {
     if (miniProgress) {
       miniProgress.style.width = `${pct}%`;
       miniProgress.style.backgroundColor = 'var(--brand-red, #ff334b)';
+    }
+    if (this.state.mode === 'mini') {
+      const channelEl = this.host.querySelector('#mini-player-channel');
+      if (channelEl) {
+        const meta = this.state.currentMetadata;
+        const channelName = meta?.author || meta?.channel || 'YouTube';
+        const remSec = (duration > 0 && currentTime >= 0) ? Math.max(0, duration - currentTime) : 0;
+        if (remSec > 0) {
+          channelEl.textContent = `${channelName} • ${formatRemaining(remSec)} remaining`;
+        } else {
+          channelEl.textContent = channelName;
+        }
+      }
     }
     if (progressContainer) {
       progressContainer.setAttribute('aria-valuenow', Math.round(pct));

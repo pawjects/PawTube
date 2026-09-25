@@ -31,7 +31,7 @@
 ### Local Development
 ```bash
 # Clone repository
-git clone https://github.com/biswanathdas8307/PawTube.git
+git clone https://github.com/pawjects/PawTube.git
 cd PawTube
 
 # Install dependencies

@@ -62,4 +62,9 @@
   /* Safe Area Insets */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  
+  /* Mini-Player Dimensions */
+  --mini-player-height: 72px;
+  --mini-player-height-mobile: 68px;
 }

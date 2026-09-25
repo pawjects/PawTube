@@ -22,6 +22,25 @@
   <link rel="stylesheet" href="/src/styles/global.css" />
   <link rel="stylesheet" href="/src/styles/liquid-glass.css" />
   <link rel="stylesheet" href="/src/styles/responsive.css" />
+  <script>
+    (function() {
+      try {
+        var raw = localStorage.getItem('pawtube_prefs');
+        if (raw) {
+          var p = JSON.parse(raw);
+          if (p.theme === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light');
+          }
+          if (p.liquidGlass === false) {
+            document.documentElement.classList.add('no-glass');
+          }
+          if (p.reducedMotion) {
+            document.documentElement.classList.add('reduced-motion');
+          }
+        }
+      } catch(e) {}
+    })();
+  </script>
 </head>
 <body>
   <div id="app">
@@ -83,8 +102,16 @@
         <div class="divider"></div>
 
         <div class="sidebar-footer">
-          <p>PawTube &bull; Piped-Only Engine</p>
-          <p>&copy; 2026 PawTube</p>
+          <div class="pawjects-sidebar-brand">
+            <span class="material-symbols-rounded pawjects-paw-icon" style="font-size:16px;color:var(--brand-blue);">pets</span>
+            <span>Pawjects ecosystem</span>
+          </div>
+          <p class="sidebar-footer-desc">Privacy Media Hub</p>
+          <div class="sidebar-footer-links" style="display:flex;align-items:center;gap:8px;font-size:11px;margin-top:6px;">
+            <a href="https://pawjects.github.io" target="_blank" rel="noopener noreferrer" style="color:var(--text-tertiary);text-decoration:none;">Website</a>
+            <span style="color:var(--text-disabled);">&bull;</span>
+            <a href="https://github.com/pawjects" target="_blank" rel="noopener noreferrer" style="color:var(--text-tertiary);text-decoration:none;">GitHub</a>
+          </div>
         </div>
       </nav>
     </aside>
@@ -245,10 +272,10 @@
           <div class="mini-player-channel" id="mini-player-channel">Channel</div>
         </div>
         <div class="mini-player-actions">
-          <button class="icon-btn mini-player-btn" id="mini-player-play-btn" aria-label="Play or Pause">
+          <button class="icon-btn mini-player-btn" id="mini-player-play-btn" type="button" aria-label="Play or Pause">
             <span class="material-symbols-rounded" id="mini-player-play-icon">pause</span>
           </button>
-          <button class="icon-btn mini-player-btn" id="mini-player-close-btn" aria-label="Close Mini Player">
+          <button class="icon-btn mini-player-btn" id="mini-player-close-btn" type="button" aria-label="Close Mini Player">
             <span class="material-symbols-rounded">close</span>
           </button>
         </div>

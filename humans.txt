@@ -1,7 +1,7 @@
 /* TEAM */
-  Developer: Sky
-  Collective: PawDevs
-  Site: github.com/pawjects
+  Ecosystem: Pawjects ecosystem
+  Site: https://pawjects.github.io
+  GitHub: https://github.com/pawjects
 
 /* SITE */
   Last update: 2026

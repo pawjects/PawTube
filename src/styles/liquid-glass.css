@@ -2093,3 +2093,232 @@ body:has(textarea:focus) .bottom-nav {
   opacity: 1;
   visibility: visible;
 }
+
+/* ==========================================================================
+   Collapsible Settings Accordion (Liquid Glass)
+   ========================================================================== */
+.settings-accordion-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-accordion-item {
+  background: var(--bg-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: 18px;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-accordion-item:hover {
+  border-color: var(--glass-border-focus, rgba(62, 166, 255, 0.4));
+}
+
+.settings-accordion-item.expanded {
+  border-color: rgba(62, 166, 255, 0.35);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.08);
+}
+
+.settings-accordion-header {
+  width: 100%;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-primary);
+  transition: background 0.15s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.settings-accordion-header:hover {
+  background: var(--bg-elevated);
+}
+
+.settings-accordion-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-accordion-icon-box {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border-light);
+  transition: all 0.2s ease;
+}
+
+.settings-accordion-item.expanded .settings-accordion-icon-box {
+  background: var(--bg-hover);
+  color: var(--brand-color);
+  border-color: var(--glass-border-focus);
+}
+
+.settings-accordion-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-accordion-title {
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.settings-accordion-summary {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-accordion-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.15s ease;
+  flex-shrink: 0;
+}
+
+.settings-accordion-header:hover .settings-accordion-indicator {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.settings-accordion-indicator .chevron-icon {
+  font-size: 20px;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.settings-accordion-item.expanded .settings-accordion-indicator .chevron-icon {
+  transform: rotate(180deg);
+}
+
+.settings-accordion-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.22s ease;
+  opacity: 0;
+}
+
+.settings-accordion-body > .settings-accordion-content {
+  overflow: hidden;
+  padding: 0 20px;
+}
+
+.settings-accordion-item.expanded .settings-accordion-body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.settings-accordion-item.expanded .settings-accordion-body > .settings-accordion-content {
+  padding: 14px 20px 20px;
+  border-top: 1px solid var(--glass-border-light);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-accordion-body,
+  .settings-accordion-indicator .chevron-icon {
+    transition: none !important;
+  }
+}
+
+.pawject-feature-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--glass-border-light);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Pawjects Sidebar Badge */
+.pawjects-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.sidebar-footer-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.sidebar-footer-copy {
+  font-size: 10.5px;
+  color: var(--text-disabled);
+  margin: 2px 0 0 0;
+}
+
+/* Subtle Pawjects Ecosystem Footer */
+.pawjects-ecosystem-footer {
+  margin-top: 48px;
+  padding: 24px 16px 12px;
+  text-align: center;
+  border-top: 1px solid var(--glass-border-light);
+}
+
+.pawjects-footer-title {
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.2px;
+}
+
+.pawjects-footer-sub {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.pawjects-footer-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin-top: 12px;
+}
+
+.pawjects-footer-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.pawjects-footer-links a:hover {
+  color: var(--brand-color);
+  text-decoration: underline;
+}

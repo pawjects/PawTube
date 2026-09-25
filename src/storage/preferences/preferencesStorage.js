@@ -13,7 +13,7 @@ export const DEFAULT_PREFS = {
   rememberPosition: true,
 
   // APPEARANCE
-  theme: 'amoled', // 'amoled' | 'midnight'
+  theme: 'amoled', // 'amoled' | 'light'
   liquidGlass: true,
   reducedMotion: false,
 
@@ -71,9 +71,9 @@ export function applyAppearancePreferences(prefs = getPreferences()) {
   try {
     const root = document.documentElement;
 
-    // Theme (AMOLED vs Midnight)
-    if (prefs.theme === 'midnight') {
-      root.setAttribute('data-theme', 'midnight');
+    // Theme (AMOLED vs Light)
+    if (prefs.theme === 'light') {
+      root.setAttribute('data-theme', 'light');
     } else {
       root.removeAttribute('data-theme');
     }
@@ -94,6 +94,11 @@ export function applyAppearancePreferences(prefs = getPreferences()) {
   } catch (e) {
     console.warn('Failed to apply appearance preferences:', e);
   }
+}
+
+// Ensure appearance is applied immediately on module load
+if (typeof document !== 'undefined') {
+  applyAppearancePreferences();
 }
 
 export function resetPreferences() {
