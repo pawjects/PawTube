@@ -1,15 +1,21 @@
 /**
  * PawTube - Home Page
- * Discovery feed with local personalization ranking and clean responsive liquid-glass presentation.
+ * Discovery feed powered by multi-signal local recommendation layer and liquid-glass presentation.
+ *
+ * Flow:
+ * User Signals -> Interest Profile -> Candidate Videos -> Ranking / Deduplication -> Personalized Home Feed
  */
 
-import { PipedApi } from '../../api/piped/pipedApi.js';
 import { isAbortError } from '../../api/client/apiClient.js';
 import { renderVideoCard, renderSkeletonCards, renderErrorState, renderCompactVideoCard } from '../../components/video/videoCard.js';
-import { getHistory, getContinueWatching } from '../../storage/history/historyStorage.js';
+import { getContinueWatching } from '../../storage/history/historyStorage.js';
 import { getFollowedChannels, getPreferences } from '../../storage/preferences/preferencesStorage.js';
-import { rankFeedItems } from '../../storage/personalization/personalizationEngine.js';
-import { formatDuration } from '../../api/normalization/mediaModels.js';
+import {
+  buildInterestProfile,
+  fetchPersonalizedCandidates,
+  rankFeedItems,
+  filterNonStandardVideos
+} from '../../storage/personalization/personalizationEngine.js';
 import { escapeHtml } from '../../utils/dom.js';
 
 const CATEGORIES = ['All', 'Following', 'Music', 'Gaming', 'News', 'Tech', 'Animation', 'Podcasts'];
@@ -18,50 +24,19 @@ let homeRenderSeq = 0;
 let homeAbortController = null;
 let userActivityDirty = false;
 
-// Listen to local user activity to mark feed as needing re-ranking
+// Listen to local user activity events to mark feed as needing re-ranking
 if (typeof window !== 'undefined') {
   window.addEventListener('pawtube:historyChange', () => { userActivityDirty = true; });
   window.addEventListener('pawtube:likeChange', () => { userActivityDirty = true; });
   window.addEventListener('pawtube:subChange', () => { userActivityDirty = true; });
+  window.addEventListener('pawtube:followChange', () => { userActivityDirty = true; });
+  window.addEventListener('pawtube:searchHistoryChange', () => { userActivityDirty = true; });
+  window.addEventListener('pawtube:channelVisit', () => { userActivityDirty = true; });
 }
 
 // Client-side cache to enable immediate rendering without flickering
 const feedCache = new Map();
 const CACHE_TTL_MS = 120000; // 2 minutes
-
-/**
- * Filter out all Shorts and Live content strictly at data processing layer
- */
-export function filterHomeFeedItems(items) {
-  if (!Array.isArray(items)) return [];
-  return items.filter((item) => {
-    if (!item || !item.id) return false;
-
-    // 1. Filter out YouTube Shorts using authoritative metadata signals
-    if (item.isShort === true) return false;
-    if (item.type === 'short' || item.type === 'shorts') return false;
-    if (item.url && item.url.includes('/shorts/')) return false;
-    if (item.pawtubeUrl && item.pawtubeUrl.includes('/shorts/')) return false;
-    const titleLower = (item.title || '').toLowerCase();
-    if (titleLower.includes('#shorts') || titleLower.includes('#short')) {
-      return false;
-    }
-
-    // 2. Filter out Live streams / broadcasts / premieres using metadata
-    if (item.isLive === true) return false;
-    if (item.liveNow === true) return false;
-    if (item.type === 'live' || item.type === 'livestream' || item.type === 'live_stream') return false;
-    const durSec = item.durationSeconds !== undefined ? item.durationSeconds : item.duration;
-    if (typeof durSec === 'number' && durSec < 0) return false;
-    const durStr = String(item.durationFormatted || '').toUpperCase();
-    if (durStr === 'LIVE' || durStr.includes('LIVE')) return false;
-    if (item.badges && Array.isArray(item.badges) && item.badges.some((b) => /LIVE|PREMIERE/i.test(String(b)))) {
-      return false;
-    }
-
-    return true;
-  });
-}
 
 export async function renderHomePage(container, options = {}) {
   const { forceRefresh = false } = options;
@@ -75,10 +50,10 @@ export async function renderHomePage(container, options = {}) {
   const signal = homeAbortController.signal;
 
   const prefs = getPreferences();
-  const history = getHistory();
   const continueWatching = getContinueWatching().slice(0, 4);
   const followedChannels = getFollowedChannels();
   const currentRegion = (prefs.region || 'IN').toUpperCase();
+  const profile = buildInterestProfile();
 
   // Check cached feed
   const cachedEntry = feedCache.get(activeCategory);
@@ -87,8 +62,8 @@ export async function renderHomePage(container, options = {}) {
 
   let initialRenderItems = [];
   if (hasValidCache) {
-    const filteredCached = filterHomeFeedItems(cachedEntry.items);
-    initialRenderItems = rankFeedItems(filteredCached);
+    const filteredCached = filterNonStandardVideos(cachedEntry.items);
+    initialRenderItems = rankFeedItems(filteredCached, profile);
   }
 
   let html = `
@@ -105,6 +80,7 @@ export async function renderHomePage(container, options = {}) {
     </div>
   `;
 
+  // Continue Watching Shelf
   if (continueWatching.length > 0 && activeCategory === 'All') {
     html += `
       <div class="section-header" style="margin-bottom:12px;">
@@ -119,6 +95,7 @@ export async function renderHomePage(container, options = {}) {
     `;
   }
 
+  // From Your Subscriptions / Followed Channels Rail
   if (followedChannels.length > 0 && activeCategory === 'All') {
     html += `
       <div class="section-header" style="margin-top:14px;">
@@ -141,15 +118,30 @@ export async function renderHomePage(container, options = {}) {
     `;
   }
 
-  const categoryTitle = activeCategory === 'All' 
-    ? `Trending (${currentRegion})` 
-    : (activeCategory === 'Following' ? 'Latest from Followed Channels' : escapeHtml(activeCategory));
+  // Section title based on personalization state
+  let sectionTitle;
+  let sectionIcon;
+  if (activeCategory === 'All') {
+    if (profile.hasEnoughSignals && prefs.personalizationEnabled !== false) {
+      sectionTitle = `Recommended for You`;
+      sectionIcon = 'auto_awesome';
+    } else {
+      sectionTitle = `Trending (${currentRegion})`;
+      sectionIcon = 'local_fire_department';
+    }
+  } else if (activeCategory === 'Following') {
+    sectionTitle = 'Latest from Followed Channels';
+    sectionIcon = 'subscriptions';
+  } else {
+    sectionTitle = escapeHtml(activeCategory);
+    sectionIcon = 'local_fire_department';
+  }
 
   html += `
     <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;">
       <h2 class="section-title">
-        <span class="material-symbols-rounded">${activeCategory === 'All' ? 'auto_awesome' : (activeCategory === 'Following' ? 'subscriptions' : 'local_fire_department')}</span>
-        ${categoryTitle}
+        <span class="material-symbols-rounded" style="${sectionIcon === 'auto_awesome' ? 'color:var(--brand-blue);' : ''}">${sectionIcon}</span>
+        ${sectionTitle}
       </h2>
     </div>
     <div class="video-grid" id="home-grid">
@@ -206,56 +198,42 @@ export async function renderHomePage(container, options = {}) {
   // If cache exists but user had recent activity, re-rank immediately
   if (hasValidCache && userActivityDirty && !forceRefresh) {
     userActivityDirty = false;
-    const reFiltered = filterHomeFeedItems(cachedEntry.items);
-    const reRanked = rankFeedItems(reFiltered);
+    const reFiltered = filterNonStandardVideos(cachedEntry.items);
+    const reRanked = rankFeedItems(reFiltered, profile);
     if (grid && currentSeq === homeRenderSeq) {
       grid.innerHTML = reRanked.map(renderVideoCard).join('');
     }
-    // Still perform background refresh if near stale
+    // Perform background refresh if near stale
     if (Date.now() - cachedEntry.timestamp < CACHE_TTL_MS * 0.7) {
       return;
     }
   }
 
-  // Fetch fresh content asynchronously
+  // Fetch Candidate Videos Layer asynchronously (Real Piped candidates)
   try {
-    let result;
-    if (activeCategory === 'All') {
-      result = await PipedApi.getTrending(currentRegion, { signal });
-    } else if (activeCategory === 'Following') {
-      const responses = await Promise.allSettled(
-        followedChannels.slice(0, 6).map((f) => PipedApi.getChannel(f.id, null, { signal }))
-      );
-      const combined = [];
-      responses.forEach((res) => {
-        if (res.status === 'fulfilled') {
-          const list = res.value?.videos || res.value?.items || [];
-          combined.push(...list.filter((i) => i.type !== 'channel'));
-        }
-      });
-      result = { items: combined };
-    } else {
-      result = await PipedApi.search(activeCategory, 'all', { signal });
-    }
+    const { items: rawCandidates, profile: freshProfile } = await fetchPersonalizedCandidates({
+      activeCategory,
+      region: currentRegion,
+      signal
+    });
 
     if (currentSeq !== homeRenderSeq || signal.aborted) return;
 
-    let items = result?.items || [];
-    
-    // 1. Filter out all Shorts and live broadcasts strictly at data processing layer
-    const filteredItems = filterHomeFeedItems(items);
+    // Filter out all Shorts and live broadcasts strictly at data processing layer
+    const filteredCandidates = filterNonStandardVideos(rawCandidates);
 
     // Save to local feed cache if items were returned
-    if (filteredItems.length > 0) {
+    if (filteredCandidates.length > 0) {
       feedCache.set(activeCategory, {
-        items: filteredItems,
+        items: filteredCandidates,
         timestamp: Date.now()
       });
       userActivityDirty = false;
     }
 
-    // 2. Personalize and re-rank with local signals
-    const personalizedItems = rankFeedItems(filteredItems);
+    // Ranking / Deduplication Layer:
+    // Multi-signal scoring with topic/channel affinity, recency decay, completion boost, repetition penalty
+    const personalizedItems = rankFeedItems(filteredCandidates, freshProfile);
 
     if (grid && currentSeq === homeRenderSeq) {
       if (personalizedItems.length === 0) {
@@ -279,7 +257,7 @@ export async function renderHomePage(container, options = {}) {
     if (currentSeq === homeRenderSeq && grid) {
       if (hasValidCache) {
         // Fall back to stale cache if network failed
-        const fallbackItems = rankFeedItems(filterHomeFeedItems(cachedEntry.items));
+        const fallbackItems = rankFeedItems(filterNonStandardVideos(cachedEntry.items), profile);
         grid.innerHTML = fallbackItems.map(renderVideoCard).join('');
       } else {
         grid.innerHTML = renderErrorState('Unable to load feed', 'Could not reach Piped instances. Tap retry to reconnect.', 'window.pawtubeRetryHomeFeed');

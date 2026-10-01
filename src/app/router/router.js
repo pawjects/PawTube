@@ -91,8 +91,8 @@ export class Router {
     const possibleVideoId = extractVideoId(window.location.href);
     const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you', '/channel', '/search'].some(p => path.startsWith(p)));
 
-    // Handle mini-player transitions
-    if (previousRoute && previousRoute.includes('watch') && !isNavigatingToWatch) {
+    // Handle mini-player transitions: preserve playback when navigating away from watch
+    if (!isNavigatingToWatch && playerController.state.mode === 'watch' && playerController.state.currentVideoId) {
       playerController.onNavigateAwayFromWatch();
     }
 

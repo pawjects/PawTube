@@ -9,6 +9,7 @@ import { isFollowed, toggleFollow } from '../../storage/preferences/preferencesS
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
 import { isAbortError } from '../../api/client/apiClient.js';
+import { recordChannelVisit } from '../../storage/personalization/personalizationEngine.js';
 
 let channelSeq = 0;
 let currentChannelAbortController = null;
@@ -83,6 +84,7 @@ export async function renderChannelPage(container, channelId) {
     channelData = res;
     channelVideos = Array.isArray(res.videos) ? res.videos : [];
     nextpageToken = res.nextpage || null;
+    recordChannelVisit({ id: cleanId, name: res.name || res.title, avatar: res.avatar });
 
     renderChannelView(container, cleanId);
   } catch (err) {

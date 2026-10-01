@@ -154,6 +154,15 @@
           allowfullscreen>
         </iframe>
 
+        <!-- Video Preview Thumbnail for smooth visual transitions -->
+        <img 
+          id="player-preview-thumb" 
+          class="player-preview-thumb" 
+          alt="" 
+          src="" 
+          style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;pointer-events:none;" 
+        />
+
         <!-- Clickable transparent overlay for play/pause toggle & double-tap seek -->
         <div class="player-click-layer" id="player-click-layer">
           <div class="seek-ripple left" id="seek-ripple-left">

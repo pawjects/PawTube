@@ -379,6 +379,16 @@ export class VideoPlayerController {
       };
     }
 
+    // Clicking anywhere on mini-player container (outside action buttons) expands to watch
+    this.host.onclick = (e) => {
+      if (this.state.mode === 'mini') {
+        if (e.target.closest('.mini-player-btn')) {
+          return;
+        }
+        this.expandToWatch();
+      }
+    };
+
     // Click Layer: Single-tap play/pause, Double-tap -10s / +10s seek
     if (clickLayer) {
       let clickTimer = null;
@@ -926,6 +936,13 @@ export class VideoPlayerController {
       if (!this.state.duration || this.state.duration <= 0) {
         this.state.duration = dur;
         this.updateProgressUI();
+      }
+    }
+    if (metadata.thumb) {
+      const thumbEl = this.host?.querySelector('#player-preview-thumb');
+      if (thumbEl) {
+        thumbEl.src = metadata.thumb;
+        thumbEl.style.display = 'block';
       }
     }
     this.syncMiniPlayerUI();

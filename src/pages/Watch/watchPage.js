@@ -237,7 +237,12 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
         document.body.classList.add('theatre-mode-active');
       }
     }
-    playerController.attachToWatch(playerSlot, cleanId, currentVideoData, startTime);
+    const effectiveStartTime = startTime > 0 ? startTime : (
+      (cachedVideo?.progress && !cachedVideo.completed && cachedVideo.progress > 5 && (!cachedVideo.duration || cachedVideo.progress < cachedVideo.duration - 10))
+        ? cachedVideo.progress
+        : 0
+    );
+    playerController.attachToWatch(playerSlot, cleanId, currentVideoData, effectiveStartTime);
   }
 
   // ==========================================
