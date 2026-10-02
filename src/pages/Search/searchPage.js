@@ -118,18 +118,19 @@ export async function renderSearchPage(container, query) {
         }
 
         return `
-          <div class="channel-card" style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;transition:transform 0.15s, background 0.15s;" 
-            onclick="window.location.hash='#/channel/${encodeURIComponent(channelId)}'">
-            <img src="${escapeHtml(avatarUrl)}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover;background:var(--bg-elevated);border:2px solid var(--glass-border);" onerror="this.src='/public/assets/pawtube_logo.png';" />
-            <div style="flex:1;min-width:0;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <h3 style="font-size:16px;font-weight:600;margin:0;color:var(--text-primary);">${escapeHtml(channelName)}</h3>
-                ${item.verified ? `<span class="material-symbols-rounded" style="font-size:16px;color:var(--brand-blue);" title="Verified">check_circle</span>` : ''}
+          <div class="search-channel-card channel-card" role="button" tabindex="0" aria-label="Channel: ${escapeHtml(channelName)}"
+            onclick="window.location.hash='#/channel/${encodeURIComponent(channelId)}'"
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.location.hash='#/channel/${encodeURIComponent(channelId)}';}">
+            <img class="search-channel-avatar" src="${escapeHtml(avatarUrl)}" alt="" onerror="this.src='/public/assets/pawtube_logo.png';" />
+            <div class="search-channel-info">
+              <div class="search-channel-title-row">
+                <h3 class="search-channel-title">${escapeHtml(channelName)}</h3>
+                ${item.verified ? `<span class="material-symbols-rounded search-verified-badge" title="Verified">check_circle</span>` : ''}
               </div>
-              <p style="font-size:13px;color:var(--text-secondary);margin:4px 0 0;">${escapeHtml(subText)}</p>
-              ${item.description ? `<p style="font-size:12px;color:var(--text-tertiary);margin:4px 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.description)}</p>` : ''}
+              <p class="search-channel-sub">${escapeHtml(subText)}</p>
+              ${item.description ? `<p class="search-channel-desc">${escapeHtml(item.description)}</p>` : ''}
             </div>
-            <button type="button" style="padding:8px 20px;border-radius:999px;background:var(--text-primary);color:var(--bg-primary);border:none;font-weight:600;font-size:13px;cursor:pointer;flex-shrink:0;">
+            <button type="button" class="search-channel-btn" aria-label="View Channel">
               View Channel
             </button>
           </div>
@@ -144,32 +145,31 @@ export async function renderSearchPage(container, query) {
         const plThumb = pl.thumb || pl.thumbnail || '';
 
         return `
-          <div class="playlist-card" role="button" tabindex="0" aria-label="Playlist: ${escapeHtml(plTitle)}"
-            style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;transition:transform 0.15s, background 0.15s;" 
+          <div class="search-playlist-card playlist-card" role="button" tabindex="0" aria-label="Playlist: ${escapeHtml(plTitle)}"
             onclick="window.location.hash='#/playlist?list=${encodeURIComponent(plId)}'"
             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.location.hash='#/playlist?list=${encodeURIComponent(plId)}';}">
-            <div style="width:130px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000;position:relative;flex-shrink:0;box-shadow:var(--shadow-glass);">
-              <img src="${escapeHtml(plThumb)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />
-              <div style="position:absolute;inset:0;background:linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%);display:flex;align-items:flex-end;padding:6px 8px;">
-                <div style="display:flex;align-items:center;gap:4px;color:#fff;font-size:11px;font-weight:600;">
-                  <span class="material-symbols-rounded" style="font-size:16px;">playlist_play</span>
+            <div class="search-playlist-thumb-wrap">
+              <img src="${escapeHtml(plThumb)}" alt="" onerror="this.src='/public/assets/pawtube_logo.png';" />
+              <div class="search-playlist-overlay">
+                <div class="search-playlist-badge">
+                  <span class="material-symbols-rounded">playlist_play</span>
                   <span>${escapeHtml(plCount)}</span>
                 </div>
               </div>
             </div>
-            <div style="flex:1;min-width:0;">
-              <div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;text-transform:uppercase;color:var(--brand-blue);font-weight:600;margin-bottom:4px;letter-spacing:0.5px;">
-                <span class="material-symbols-rounded" style="font-size:14px;">queue_music</span>
+            <div class="search-playlist-info">
+              <div class="search-playlist-tag">
+                <span class="material-symbols-rounded">queue_music</span>
                 <span>Playlist</span>
               </div>
-              <h3 style="font-size:15px;font-weight:600;color:var(--text-primary);margin:0 0 4px 0;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                ${escapeHtml(plTitle)}
-              </h3>
-              <p style="font-size:13px;color:var(--text-secondary);margin:0;">
-                ${escapeHtml(plChannel)} &bull; ${escapeHtml(plCount)}
+              <h3 class="search-playlist-title">${escapeHtml(plTitle)}</h3>
+              <p class="search-playlist-meta">
+                <span class="search-playlist-channel">${escapeHtml(plChannel)}</span>
+                <span class="meta-dot">&bull;</span>
+                <span class="search-playlist-count">${escapeHtml(plCount)}</span>
               </p>
             </div>
-            <button type="button" style="padding:8px 20px;border-radius:999px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--glass-border);font-weight:600;font-size:13px;cursor:pointer;flex-shrink:0;">
+            <button type="button" class="search-playlist-btn" aria-label="View Playlist">
               View Playlist
             </button>
           </div>

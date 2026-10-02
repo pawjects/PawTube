@@ -217,11 +217,12 @@ function renderPlaylistView(container, cleanId) {
     }
   });
 
-  // Bind Play All (populates queue and starts playback, keeping user on page with mini-player or current view)
+  // Bind Play All (populates queue and starts playback in full video player)
   container.querySelector('#playlist-play-all-btn')?.addEventListener('click', () => {
     if (pl.videos.length > 0) {
       playerController.setQueue(pl.videos, 0, pl.id, title);
-      showToast(`Playing playlist (${pl.videos.length} videos)`, 'success');
+      const firstVideo = pl.videos[0];
+      window.location.hash = `#/watch?v=${encodeURIComponent(firstVideo.id)}&list=${encodeURIComponent(pl.id)}`;
     } else {
       showToast('No playable videos in this playlist', 'info');
     }
@@ -232,7 +233,8 @@ function renderPlaylistView(container, cleanId) {
     if (pl.videos.length > 0) {
       const shuffled = [...pl.videos].sort(() => Math.random() - 0.5);
       playerController.setQueue(shuffled, 0, pl.id, title);
-      showToast('Playing shuffled playlist', 'success');
+      const firstVideo = shuffled[0];
+      window.location.hash = `#/watch?v=${encodeURIComponent(firstVideo.id)}&list=${encodeURIComponent(pl.id)}`;
     } else {
       showToast('No playable videos in this playlist', 'info');
     }

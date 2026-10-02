@@ -42,24 +42,45 @@ export class Router {
       const params = new URLSearchParams(qs || '');
       const path = rawPath || '/home';
 
-      // Check for /playlist in hash e.g. #/playlist?list=... or #/playlist/PL... or #/pawtube/playlist/PL...
+      // 1. Check for /watch in hash FIRST: e.g. #/watch?v=... or #/watch?v=...&list=...
+      if (path.startsWith('/watch') || (params.has('v') && !path.startsWith('/playlist') && !path.startsWith('/channel'))) {
+        let videoId = params.get('v') || params.get('id');
+        if (!videoId) {
+          const parts = path.split('/');
+          if (parts.length >= 3) videoId = parts[2];
+        }
+        return { path: '/watch', params, videoId, raw: hashClean };
+      }
+
+      // 2. Check for /playlist in hash e.g. #/playlist?list=... or #/playlist/PL... or #/pawtube/playlist/PL...
       if (
         path.startsWith('/playlist') ||
         path.startsWith('/playlists') ||
         path.startsWith('/pawtube/playlist') ||
-        params.has('list')
+        (params.has('list') && !params.has('v'))
       ) {
         const playlistId = params.get('list') || extractPlaylistId(hashClean);
         return { path: '/playlist', params, playlistId, raw: hashClean };
       }
 
-      // Check for /channel/:id in hash
+      // 3. Check for /channel/:id in hash
       if (path.startsWith('/channel/')) {
         const channelId = decodeURIComponent(path.replace(/^\/channel\//, ''));
         return { path: '/channel', params, channelId, raw: hashClean };
       }
 
       return { path, params, raw: hashClean };
+    }
+
+    // Direct pathname support for watch e.g. /watch?v=...&list=...
+    if (pathname.startsWith('/watch')) {
+      const parts = pathname.split('/');
+      const params = new URLSearchParams(search);
+      let videoId = params.get('v') || params.get('id');
+      if (!videoId && parts.length >= 3) {
+        videoId = parts[2];
+      }
+      return { path: '/watch', params, videoId };
     }
 
     // Direct pathname support (e.g. /playlist/ID, /pawtube/playlist/ID, /playlist?list=ID)
@@ -76,18 +97,11 @@ export class Router {
       return { path: '/channel', params, channelId };
     }
 
-    if (pathname.startsWith('/watch')) {
-      const parts = pathname.split('/');
-      const params = new URLSearchParams(search);
-      let videoId = params.get('v') || params.get('id');
-      if (!videoId && parts.length >= 3) {
-        videoId = parts[2];
-      }
-      return { path: '/watch', params, videoId };
-    }
-
     if (pathname.length > 1 && pathname !== '/index.html') {
       const params = new URLSearchParams(search);
+      if (params.has('v')) {
+        return { path: '/watch', params, videoId: params.get('v') };
+      }
       if (params.has('list')) {
         return { path: '/playlist', params, playlistId: params.get('list') };
       }
@@ -96,13 +110,13 @@ export class Router {
 
     // Fallback default
     const params = new URLSearchParams(search);
-    const list = params.get('list');
-    if (list) {
-      return { path: '/playlist', params, playlistId: list };
-    }
     const v = params.get('v');
     if (v) {
       return { path: '/watch', params, videoId: v };
+    }
+    const list = params.get('list');
+    if (list) {
+      return { path: '/playlist', params, playlistId: list };
     }
 
     return { path: '/home', params };

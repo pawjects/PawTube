@@ -24,10 +24,12 @@ export class VideoPlayerController {
     this.iframe = null;
     this.slotElement = null;
 
-    // Single source of truth for player state
+    // Single authoritative source of truth for playback state across Watch, Mini, and Fullscreen
     this.state = {
       currentVideoId: null,
+      currentVideo: null,
       currentMetadata: null,
+      currentStream: null,
       isPlaying: false,
       isBuffering: false,
       currentTime: 0,
@@ -45,6 +47,7 @@ export class VideoPlayerController {
       playlistTitle: ''
     };
 
+    this.modeBeforeFullscreen = null;
     this.isDraggingSeek = false;
     this.controlsTimeout = null;
     this.tickerInterval = null;
@@ -52,6 +55,27 @@ export class VideoPlayerController {
     this.boundSyncPosition = this.syncPositionWithSlot.bind(this);
     this.resizeObserver = null;
     this.isInitialized = false;
+  }
+
+  notifyStateChange() {
+    window.dispatchEvent(new CustomEvent('pawtube:stateChange', {
+      detail: {
+        currentVideoId: this.state.currentVideoId,
+        currentVideo: this.state.currentVideo || this.state.currentMetadata,
+        currentStream: this.state.currentStream,
+        isPlaying: this.state.isPlaying,
+        currentTime: this.state.currentTime,
+        duration: this.state.duration,
+        volume: this.state.volume,
+        isMuted: this.state.isMuted,
+        mode: this.state.mode,
+        isFullscreen: this.state.isFullscreen,
+        queue: this.state.queue,
+        queueIndex: this.state.queueIndex,
+        playlistId: this.state.playlistId,
+        playlistTitle: this.state.playlistTitle
+      }
+    }));
   }
 
   init() {
@@ -90,11 +114,28 @@ export class VideoPlayerController {
     window.addEventListener('orientationchange', this.boundSyncPosition, { passive: true });
 
     const handleFullscreenChange = () => {
-      this.state.isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      this.host.classList.toggle('fullscreen', this.state.isFullscreen);
+      const isNowFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      this.state.isFullscreen = isNowFull;
+      this.host.classList.toggle('fullscreen', isNowFull);
       const icon = this.host.querySelector('#icon-fullscreen');
-      if (icon) icon.textContent = this.state.isFullscreen ? 'fullscreen_exit' : 'fullscreen';
-      this.syncPositionWithSlot();
+      if (icon) icon.textContent = isNowFull ? 'fullscreen_exit' : 'fullscreen';
+
+      if (!isNowFull) {
+        // Exiting fullscreen
+        if (this.modeBeforeFullscreen === 'mini') {
+          this.setMode('mini');
+          this.modeBeforeFullscreen = null;
+        } else {
+          this.syncPositionWithSlot();
+        }
+      } else {
+        // Entering fullscreen
+        if (this.state.mode === 'mini') {
+          this.modeBeforeFullscreen = 'mini';
+        }
+      }
+
+      this.notifyStateChange();
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
@@ -160,11 +201,13 @@ export class VideoPlayerController {
 
     const isSameVideo = this.state.currentVideoId === cleanId;
     this.state.currentMetadata = metadata || this.state.currentMetadata;
+    this.state.currentVideo = this.state.currentMetadata;
 
     if (isSameVideo) {
       // Seamlessly expand from mini-player to watch mode
       this.setMode('watch');
       this.updateMetadata(metadata);
+      this.notifyStateChange();
       return;
     }
 
@@ -188,10 +231,12 @@ export class VideoPlayerController {
       start: startTime
     });
 
+    this.state.currentStream = embedUrl;
     this.iframe.src = embedUrl;
     this.setMode('watch');
     this.updateMetadata(metadata);
     this.setBufferingState(true);
+    this.notifyStateChange();
 
     // Record in history
     if (metadata) {
@@ -407,20 +452,25 @@ export class VideoPlayerController {
 
     const cleanId = track.id;
     this.state.currentVideoId = cleanId;
+    this.state.currentVideo = track;
     this.state.currentTime = 0;
     this.state.duration = track.durationSeconds || track.duration || 0;
     this.updateMetadata(track);
 
-    this.iframe.src = buildNoCookieEmbedUrl(cleanId, {
+    const embedUrl = buildNoCookieEmbedUrl(cleanId, {
       autoplay: 1,
       enablejsapi: 1,
       playsinline: 1,
       controls: 0
     });
 
+    this.state.currentStream = embedUrl;
+    this.iframe.src = embedUrl;
+
     this.setPlayingState(true);
     this.setBufferingState(true);
     this.sendListeningHandshake();
+    this.notifyStateChange();
 
     window.dispatchEvent(new CustomEvent('pawtube:videoChange', {
       detail: { videoId: cleanId, metadata: track }
@@ -572,6 +622,18 @@ export class VideoPlayerController {
       miniCloseBtn.onclick = handleMiniClose;
       miniCloseBtn.ontouchstart = (e) => e?.stopPropagation();
       miniCloseBtn.onpointerdown = (e) => e?.stopPropagation();
+    }
+
+    const miniFullscreenBtn = this.host.querySelector('#mini-player-fullscreen-btn');
+    if (miniFullscreenBtn) {
+      const handleMiniFullscreen = (e) => {
+        e?.preventDefault();
+        e?.stopPropagation();
+        this.toggleFullscreen();
+      };
+      miniFullscreenBtn.onclick = handleMiniFullscreen;
+      miniFullscreenBtn.ontouchstart = (e) => e?.stopPropagation();
+      miniFullscreenBtn.onpointerdown = (e) => e?.stopPropagation();
     }
 
     if (miniExpandTap) {
@@ -971,6 +1033,7 @@ export class VideoPlayerController {
     this.state.isPlaying = playing;
     this.setBufferingState(false);
     this.syncPlayStateUI();
+    this.notifyStateChange();
   }
 
   setBufferingState(buffering) {
@@ -1005,6 +1068,7 @@ export class VideoPlayerController {
     if (this.state.currentVideoId) {
       updateHistoryProgress(this.state.currentVideoId, this.state.currentTime, this.state.duration, { immediate: true });
     }
+    this.notifyStateChange();
   }
 
   seekRelative(deltaSeconds) {
@@ -1015,6 +1079,7 @@ export class VideoPlayerController {
     this.state.isMuted = !this.state.isMuted;
     this.sendIframeCommand(this.state.isMuted ? 'mute' : 'unMute');
     this.updateVolumeUI();
+    this.notifyStateChange();
   }
 
   setVolume(val) {
@@ -1027,6 +1092,7 @@ export class VideoPlayerController {
       this.sendIframeCommand('unMute');
     }
     this.updateVolumeUI();
+    this.notifyStateChange();
   }
 
   updateVolumeUI() {
@@ -1156,6 +1222,7 @@ export class VideoPlayerController {
       author: cleanText(metadata.author || metadata.channel, 'YouTube Channel')
     };
     this.state.currentMetadata = { ...this.state.currentMetadata, ...cleanedMeta };
+    this.state.currentVideo = this.state.currentMetadata;
     const dur = (metadata.durationSeconds !== undefined && metadata.durationSeconds !== null)
       ? metadata.durationSeconds
       : metadata.duration;
@@ -1174,6 +1241,7 @@ export class VideoPlayerController {
     }
     this.syncMiniPlayerUI();
     this.syncQueueNavUI();
+    this.notifyStateChange();
   }
 
   syncMiniPlayerUI() {

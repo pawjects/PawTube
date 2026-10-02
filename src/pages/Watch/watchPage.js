@@ -211,21 +211,30 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
         <!-- Right Column: Related Videos -->
         <div class="watch-sidebar-col" id="watch-sidebar-col">
           ${listId ? `
-            <div class="watch-playlist-panel" style="margin-bottom:18px;padding:14px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);backdrop-filter:var(--blur-md);">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <div style="min-width:0;flex:1;">
-                  <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--brand-blue);letter-spacing:0.6px;margin-bottom:2px;">
-                    <span class="material-symbols-rounded" style="font-size:15px;">playlist_play</span>
-                    <span>Playlist</span>
+            <div class="watch-playlist-panel" id="watch-playlist-panel" style="margin-bottom:18px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);backdrop-filter:var(--blur-md);overflow:hidden;">
+              <!-- Panel Header -->
+              <div style="padding:14px;border-bottom:1px solid var(--glass-border-light);background:var(--bg-elevated);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                  <div style="min-width:0;flex:1;">
+                    <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--brand-blue);letter-spacing:0.6px;">
+                      <span class="material-symbols-rounded" style="font-size:16px;">queue_music</span>
+                      <span>Playlist</span>
+                      <span id="watch-playlist-index" style="color:var(--text-secondary);font-size:11px;font-weight:500;"></span>
+                    </div>
+                    <h4 id="watch-playlist-title" style="font-size:14px;font-weight:600;color:var(--text-primary);margin:4px 0 0 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      ${escapeHtml(cleanText(playerController.state.playlistTitle, 'Active Playlist'))}
+                    </h4>
                   </div>
-                  <h4 style="font-size:13.5px;font-weight:600;color:var(--text-primary);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                    ${escapeHtml(cleanText(playerController.state.playlistTitle, 'Active Playlist'))}
-                  </h4>
+                  <a href="#/playlist?list=${encodeURIComponent(listId)}" style="font-size:12px;color:var(--brand-blue);font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:var(--bg-surface);border-radius:999px;border:1px solid var(--glass-border);flex-shrink:0;" title="View playlist">
+                    <span>View playlist</span>
+                    <span class="material-symbols-rounded" style="font-size:15px;">arrow_forward</span>
+                  </a>
                 </div>
-                <a href="#/playlist?list=${encodeURIComponent(listId)}" style="font-size:12px;color:var(--brand-blue);font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:var(--bg-elevated);border-radius:999px;border:1px solid var(--glass-border);flex-shrink:0;" title="Return to playlist">
-                  <span>Return to playlist</span>
-                  <span class="material-symbols-rounded" style="font-size:15px;">arrow_forward</span>
-                </a>
+              </div>
+
+              <!-- Playlist Queue Items List -->
+              <div id="watch-playlist-items" class="watch-playlist-items-list" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding:8px;">
+                <div style="padding:14px;text-align:center;font-size:12px;color:var(--text-secondary);">Loading playlist queue...</div>
               </div>
             </div>
           ` : ''}
@@ -267,6 +276,103 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
         : 0
     );
     playerController.attachToWatch(playerSlot, cleanId, currentVideoData, effectiveStartTime);
+  }
+
+  // ==========================================
+  // Playlist Queue Management in Watch View
+  // ==========================================
+  if (listId) {
+    const queueItemsContainer = container.querySelector('#watch-playlist-items');
+    const queueIndexEl = container.querySelector('#watch-playlist-index');
+    const queueTitleEl = container.querySelector('#watch-playlist-title');
+
+    const updateWatchPlaylistUI = () => {
+      if (!queueItemsContainer) return;
+      const queue = playerController.state.queue || [];
+      const currentIdx = playerController.state.queueIndex || 0;
+      const activeVideoId = playerController.state.currentVideoId || cleanId;
+
+      if (queueTitleEl && playerController.state.playlistTitle) {
+        queueTitleEl.textContent = cleanText(playerController.state.playlistTitle, 'Active Playlist');
+      }
+
+      if (queueIndexEl && queue.length > 0) {
+        const foundIdx = queue.findIndex(v => v.id === activeVideoId);
+        const displayIdx = foundIdx >= 0 ? foundIdx : currentIdx;
+        queueIndexEl.textContent = `• ${displayIdx + 1} / ${queue.length}`;
+      }
+
+      if (queue.length === 0) {
+        queueItemsContainer.innerHTML = `<div style="padding:16px;text-align:center;font-size:12px;color:var(--text-secondary);">No queue videos loaded.</div>`;
+        return;
+      }
+
+      queueItemsContainer.innerHTML = queue.map((v, idx) => {
+        const isPlaying = v.id === activeVideoId;
+        const duration = v.durationFormatted || (v.durationSeconds ? formatDuration(v.durationSeconds) : '');
+        const vTitle = cleanText(v.title, 'YouTube Video');
+        const vChannel = cleanText(v.channel || v.author, 'YouTube Channel');
+        return `
+          <div class="watch-queue-row ${isPlaying ? 'active' : ''}" data-index="${idx}" data-video-id="${escapeHtml(v.id)}"
+            style="display:flex;align-items:center;gap:10px;padding:6px 8px;border-radius:10px;background:${isPlaying ? 'var(--bg-active)' : 'transparent'};border:1px solid ${isPlaying ? 'var(--brand-blue)' : 'transparent'};cursor:pointer;transition:background 0.15s;"
+            title="${escapeHtml(vTitle)}">
+            <div style="width:20px;text-align:center;font-size:12px;font-weight:600;color:${isPlaying ? 'var(--brand-blue)' : 'var(--text-tertiary)'};flex-shrink:0;">
+              ${isPlaying ? `<span class="material-symbols-rounded" style="font-size:16px;">graphic_eq</span>` : idx + 1}
+            </div>
+            <div style="width:72px;aspect-ratio:16/9;border-radius:6px;overflow:hidden;background:#000;position:relative;flex-shrink:0;">
+              <img src="${escapeHtml(v.thumb || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />
+              ${duration ? `
+                <div style="position:absolute;bottom:2px;right:2px;padding:1px 4px;border-radius:3px;background:rgba(0,0,0,0.85);font-size:9.5px;color:#fff;font-weight:600;">
+                  ${escapeHtml(duration)}
+                </div>
+              ` : ''}
+            </div>
+            <div style="flex:1;min-width:0;">
+              <h5 style="font-size:12.5px;font-weight:600;color:${isPlaying ? 'var(--brand-blue)' : 'var(--text-primary)'};margin:0 0 2px 0;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(vTitle)}
+              </h5>
+              <p style="font-size:11px;color:var(--text-secondary);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(vChannel)}
+              </p>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      queueItemsContainer.querySelectorAll('.watch-queue-row[data-index]').forEach((row) => {
+        row.addEventListener('click', () => {
+          const rowIdx = parseInt(row.getAttribute('data-index'), 10) || 0;
+          playerController.loadQueueTrack(rowIdx);
+        });
+      });
+
+      const activeEl = queueItemsContainer.querySelector('.watch-queue-row.active');
+      if (activeEl) {
+        activeEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    };
+
+    if (playerController.state.playlistId === listId && Array.isArray(playerController.state.queue) && playerController.state.queue.length > 0) {
+      updateWatchPlaylistUI();
+    } else {
+      PipedApi.getPlaylist(listId).then((pl) => {
+        if (currentSeq !== watchRenderSeq || !pl || !Array.isArray(pl.videos)) return;
+        const matchIdx = pl.videos.findIndex(v => v.id === cleanId);
+        const startIdx = matchIdx >= 0 ? matchIdx : 0;
+        playerController.setQueue(pl.videos, startIdx, listId, pl.title || pl.name || 'Playlist');
+        updateWatchPlaylistUI();
+      }).catch(() => {
+        if (queueItemsContainer) {
+          queueItemsContainer.innerHTML = `<div style="padding:14px;text-align:center;font-size:12px;color:var(--text-secondary);">Could not load playlist queue.</div>`;
+        }
+      });
+    }
+
+    const onQueueOrVideoChange = () => {
+      updateWatchPlaylistUI();
+    };
+    window.addEventListener('pawtube:queueChange', onQueueOrVideoChange);
+    window.addEventListener('pawtube:videoChange', onQueueOrVideoChange);
   }
 
   // ==========================================
