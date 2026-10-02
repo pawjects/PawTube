@@ -7,6 +7,7 @@ import { renderVideoCard, renderSkeletonCards, renderErrorState } from '../../co
 import { recordSearchQuery } from '../../storage/personalization/personalizationEngine.js';
 import { escapeHtml } from '../../utils/dom.js';
 import { isAbortError } from '../../api/client/apiClient.js';
+import { cleanText, normalizePlaylistItem } from '../../api/normalization/mediaModels.js';
 
 let searchSeq = 0;
 let currentSearchAbortController = null;
@@ -135,18 +136,42 @@ export async function renderSearchPage(container, query) {
         `;
       }
       if (item.type === 'playlist') {
+        const pl = normalizePlaylistItem(item) || item;
+        const plId = pl.id;
+        const plTitle = cleanText(pl.title || pl.name, 'Playlist');
+        const plChannel = cleanText(pl.channel || pl.author, 'YouTube Channel');
+        const plCount = pl.durationFormatted || 'Playlist';
+        const plThumb = pl.thumb || pl.thumbnail || '';
+
         return `
-          <div class="playlist-card" style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;" onclick="window.location.hash='#/playlist?list=${encodeURIComponent(item.id)}'">
-            <div style="width:120px;height:68px;border-radius:8px;overflow:hidden;background:#000;position:relative;flex-shrink:0;">
-              <img src="${escapeHtml(item.thumb || '')}" alt="" style="width:100%;height:100%;object-fit:cover;" />
-              <div style="position:absolute;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;color:#fff;">
-                <span class="material-symbols-rounded">playlist_play</span>
+          <div class="playlist-card" role="button" tabindex="0" aria-label="Playlist: ${escapeHtml(plTitle)}"
+            style="grid-column:1 / -1;display:flex;align-items:center;gap:16px;padding:16px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);cursor:pointer;transition:transform 0.15s, background 0.15s;" 
+            onclick="window.location.hash='#/playlist?list=${encodeURIComponent(plId)}'"
+            onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();window.location.hash='#/playlist?list=${encodeURIComponent(plId)}';}">
+            <div style="width:130px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000;position:relative;flex-shrink:0;box-shadow:var(--shadow-glass);">
+              <img src="${escapeHtml(plThumb)}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='/public/assets/pawtube_logo.png';" />
+              <div style="position:absolute;inset:0;background:linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 60%);display:flex;align-items:flex-end;padding:6px 8px;">
+                <div style="display:flex;align-items:center;gap:4px;color:#fff;font-size:11px;font-weight:600;">
+                  <span class="material-symbols-rounded" style="font-size:16px;">playlist_play</span>
+                  <span>${escapeHtml(plCount)}</span>
+                </div>
               </div>
             </div>
-            <div style="flex:1;">
-              <h3 style="font-size:15px;font-weight:600;">${escapeHtml(item.title)}</h3>
-              <p style="font-size:13px;color:var(--text-secondary);">${escapeHtml(item.channel || item.author || '')} • ${escapeHtml(item.durationFormatted || 'Playlist')}</p>
+            <div style="flex:1;min-width:0;">
+              <div style="display:inline-flex;align-items:center;gap:4px;font-size:11px;text-transform:uppercase;color:var(--brand-blue);font-weight:600;margin-bottom:4px;letter-spacing:0.5px;">
+                <span class="material-symbols-rounded" style="font-size:14px;">queue_music</span>
+                <span>Playlist</span>
+              </div>
+              <h3 style="font-size:15px;font-weight:600;color:var(--text-primary);margin:0 0 4px 0;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                ${escapeHtml(plTitle)}
+              </h3>
+              <p style="font-size:13px;color:var(--text-secondary);margin:0;">
+                ${escapeHtml(plChannel)} &bull; ${escapeHtml(plCount)}
+              </p>
             </div>
+            <button type="button" style="padding:8px 20px;border-radius:999px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--glass-border);font-weight:600;font-size:13px;cursor:pointer;flex-shrink:0;">
+              View Playlist
+            </button>
           </div>
         `;
       }

@@ -1,10 +1,10 @@
 /**
  * PawTube - Piped API Service
- * Interacts with the backend serverless endpoints.
+ * Interacts with the backend serverless endpoints with consistent normalization.
  */
 
 import { fetchApi } from '../client/apiClient.js';
-import { normalizeMediaItem } from '../normalization/mediaModels.js';
+import { normalizeMediaItem, normalizePlaylist, normalizePlaylistItem, cleanText } from '../normalization/mediaModels.js';
 
 export const PipedApi = {
   async getTrending(region = 'IN', options = {}) {
@@ -17,8 +17,19 @@ export const PipedApi = {
     const res = await fetchApi('/api/piped/search', { q, filter, region: 'IN' }, { ...options, ttlMs: 30000 });
     const items = (res.items || []).map((i) => {
       if (!i) return null;
-      if (i.type === 'channel' || i.type === 'playlist') return i;
-      return normalizeMediaItem(i) || i;
+      if (i.type === 'playlist') {
+        return normalizePlaylistItem(i);
+      }
+      if (i.type === 'channel') {
+        return {
+          ...i,
+          title: cleanText(i.title || i.name, 'Channel'),
+          name: cleanText(i.title || i.name, 'Channel'),
+          channel: cleanText(i.title || i.name, 'Channel'),
+          description: cleanText(i.description, '')
+        };
+      }
+      return normalizeMediaItem(i);
     }).filter(Boolean);
     return { ...res, items };
   },
@@ -33,8 +44,11 @@ export const PipedApi = {
     return fetchApi('/api/piped/channel', params, { ...options, ttlMs: nextpage ? 60000 : 120000 });
   },
 
-  async getPlaylist(listId, options = {}) {
-    return fetchApi('/api/piped/playlist', { list: listId }, { ...options, ttlMs: 120000 });
+  async getPlaylist(listId, nextpage = null, options = {}) {
+    const params = { list: listId };
+    if (nextpage) params.nextpage = nextpage;
+    const res = await fetchApi('/api/piped/playlist', params, { ...options, ttlMs: 120000 });
+    return normalizePlaylist(res) || res;
   },
 
   async getStreams(id, options = {}) {

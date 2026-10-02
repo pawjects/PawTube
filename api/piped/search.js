@@ -1,4 +1,4 @@
-const { requestPiped, normalizeMediaItem, sendResponse, sendError, parseQueryParams } = require('../_piped');
+const { requestPiped, normalizeMediaItem, sendResponse, sendError, parseQueryParams, cleanText } = require('../_piped');
 
 module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') {
@@ -43,13 +43,17 @@ module.exports = async function handler(req, res) {
         };
       }
       if (item.type === 'playlist') {
+        const rawPlId = item.url ? item.url.replace(/^[?&]list=/, '').replace(/^\/playlist\?list=/, '').replace(/^\/playlist\//, '') : (item.id || '');
+        const cleanPlId = rawPlId.split(/[?#&]/)[0].trim();
+        const vCount = typeof item.videos === 'number' ? item.videos : parseInt(String(item.videos || '0').replace(/[^0-9]/g, ''), 10) || 0;
         return {
-          id: item.url ? item.url.replace(/^\/playlist\?list=/, '') : (item.id || ''),
-          title: item.name || item.title || 'Playlist',
-          author: item.uploaderName || '',
-          channel: item.uploaderName || '',
+          id: cleanPlId,
+          title: cleanText(item.name || item.title, 'Playlist'),
+          author: cleanText(item.uploaderName || item.channel || item.author, 'YouTube Channel'),
+          channel: cleanText(item.uploaderName || item.channel || item.author, 'YouTube Channel'),
           thumb: item.thumbnail || '',
-          durationFormatted: `${item.videos || 0} videos`,
+          durationFormatted: vCount === 1 ? '1 video' : `${vCount} videos`,
+          videosCount: vCount,
           type: 'playlist'
         };
       }

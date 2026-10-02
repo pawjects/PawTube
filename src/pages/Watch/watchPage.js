@@ -15,7 +15,7 @@ import { isLiked, toggleLike } from '../../storage/likes/likesStorage.js';
 import { isSubscribed, toggleSubscription } from '../../storage/preferences/preferencesStorage.js';
 import { showToast } from '../../components/common/toast.js';
 import { escapeHtml } from '../../utils/dom.js';
-import { formatDuration } from '../../api/normalization/mediaModels.js';
+import { formatDuration, formatViews, formatUploadedDate, cleanText } from '../../api/normalization/mediaModels.js';
 import { showPlaylistModal } from '../../components/video/playlistModal.js';
 import { showShareModal, shareYouTubeUrl, sharePawTubeUrl, openOnYouTube, copyToClipboard } from '../../components/video/shareModal.js';
 
@@ -65,6 +65,10 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
   let currentlyLiked = isLiked(cleanId);
   const watchLaterPlaylist = getPlaylists().find((p) => p.id === 'watch-later');
   let isSavedWatchLater = !!watchLaterPlaylist?.items?.some((item) => item.id === cleanId);
+
+  // Check if viewing within a playlist
+  const urlParams = new URLSearchParams(window.location.hash.includes('?') ? window.location.hash.split('?')[1] : window.location.search);
+  const listId = urlParams.get('list') || playerController.state.playlistId;
 
   container.innerHTML = `
     <div class="watch-layout" id="watch-layout">
@@ -206,6 +210,26 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
 
         <!-- Right Column: Related Videos -->
         <div class="watch-sidebar-col" id="watch-sidebar-col">
+          ${listId ? `
+            <div class="watch-playlist-panel" style="margin-bottom:18px;padding:14px;background:var(--bg-surface);border-radius:16px;border:1px solid var(--glass-border);backdrop-filter:var(--blur-md);">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                <div style="min-width:0;flex:1;">
+                  <div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;text-transform:uppercase;color:var(--brand-blue);letter-spacing:0.6px;margin-bottom:2px;">
+                    <span class="material-symbols-rounded" style="font-size:15px;">playlist_play</span>
+                    <span>Playlist</span>
+                  </div>
+                  <h4 style="font-size:13.5px;font-weight:600;color:var(--text-primary);margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                    ${escapeHtml(cleanText(playerController.state.playlistTitle, 'Active Playlist'))}
+                  </h4>
+                </div>
+                <a href="#/playlist?list=${encodeURIComponent(listId)}" style="font-size:12px;color:var(--brand-blue);font-weight:600;text-decoration:none;display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:var(--bg-elevated);border-radius:999px;border:1px solid var(--glass-border);flex-shrink:0;" title="Return to playlist">
+                  <span>Return to playlist</span>
+                  <span class="material-symbols-rounded" style="font-size:15px;">arrow_forward</span>
+                </a>
+              </div>
+            </div>
+          ` : ''}
+
           <h3 style="font-size:16px;font-weight:600;margin:0 0 14px 0;display:flex;align-items:center;gap:8px;color:var(--text-primary);">
             <span class="material-symbols-rounded" style="color:var(--brand-blue);font-size:20px;">recommend</span>
             Related Content
@@ -542,11 +566,13 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
 
     // Cache metadata into videoData object
     const durSec = videoData.durationSeconds !== undefined ? videoData.durationSeconds : videoData.duration;
+    const vTitle = cleanText(videoData.title, 'YouTube Video');
+    const vChannel = cleanText(videoData.channel || videoData.author, 'YouTube Channel');
     currentVideoData = {
       id: cleanId,
-      title: videoData.title || 'YouTube Video',
-      channel: videoData.channel || videoData.author || 'YouTube Channel',
-      author: videoData.channel || videoData.author || 'YouTube Channel',
+      title: vTitle,
+      channel: vChannel,
+      author: vChannel,
       thumb: videoData.thumb || `https://i.ytimg.com/vi/${cleanId}/hqdefault.jpg`,
       durationSeconds: durSec,
       duration: durSec || 0,
@@ -558,9 +584,9 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
 
     // Update title
     const titleEl = container.querySelector('#video-title');
-    if (titleEl && videoData.title) {
-      titleEl.textContent = videoData.title;
-      document.title = `${videoData.title} - PawTube`;
+    if (titleEl && vTitle) {
+      titleEl.textContent = vTitle;
+      document.title = `${vTitle} - PawTube`;
     }
 
     // Update channel & stats
@@ -568,13 +594,13 @@ export async function renderWatchPage(container, videoIdInput, startTime = 0) {
     const channelAvatarEl = container.querySelector('#channel-avatar');
     const viewsEl = container.querySelector('#video-views');
 
-    if (channelNameEl) channelNameEl.textContent = videoData.channel || videoData.author || 'YouTube Channel';
+    if (channelNameEl) channelNameEl.textContent = vChannel;
     if (channelAvatarEl && videoData.avatar) {
       channelAvatarEl.innerHTML = `<img src="${escapeHtml(videoData.avatar)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;" onerror="this.style.display='none'" />`;
     }
     if (viewsEl) {
-      const views = videoData.views ? Number(videoData.views).toLocaleString() + ' views' : '';
-      const date = videoData.uploadDate || '';
+      const views = videoData.viewsFormatted || (videoData.views ? formatViews(videoData.views) : '');
+      const date = videoData.uploadedFormatted || (videoData.uploadDate ? formatUploadedDate(videoData.uploadDate) : '');
       viewsEl.textContent = [views, date].filter(Boolean).join(' • ');
     }
 

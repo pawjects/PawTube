@@ -199,33 +199,107 @@ function markFailure(url) {
   instanceStats.set(url, s);
 }
 
+// Text sanitization and HTML entity decoding
+function decodeHtmlEntities(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;|&#39;|&#039;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&ndash;/g, '–')
+    .replace(/&mdash;/g, '—')
+    .replace(/&bull;/g, '•')
+    .replace(/&hellip;/g, '…')
+    .replace(/&#(\d+);/g, (_, code) => {
+      const num = parseInt(code, 10);
+      return !isNaN(num) && num > 0 && num < 65536 ? String.fromCharCode(num) : '';
+    })
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => {
+      const num = parseInt(code, 16);
+      return !isNaN(num) && num > 0 && num < 65536 ? String.fromCharCode(num) : '';
+    });
+}
+
+function cleanText(str, fallback = '') {
+  if (str === null || str === undefined) return fallback;
+  let text = String(str).trim();
+  if (
+    text === 'undefined' ||
+    text === 'null' ||
+    text === '[object Object]' ||
+    text === 'NaN' ||
+    text.toLowerCase() === 'none'
+  ) {
+    return fallback;
+  }
+  text = decodeHtmlEntities(text);
+  text = text.replace(/[\u200B-\u200D\uFEFF\uFFFD\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  text = text.replace(/\s+/g, ' ').trim();
+  return text || fallback;
+}
+
 // Media normalization utilities
 function normalizeDurationSeconds(raw) {
   if (raw === null || raw === undefined || raw === '') return null;
-  const num = typeof raw === 'number' ? raw : parseFloat(String(raw).trim());
-  if (isNaN(num) || !isFinite(num)) return null;
-  if (num < 0) return null; // Live streams or invalid negative values
+  if (typeof raw === 'number') {
+    if (isNaN(raw) || !isFinite(raw) || raw < 0) return null;
+    return Math.floor(raw);
+  }
+
+  const str = String(raw).trim();
+  if (!str) return null;
+
+  // ISO 8601: PT#H#M#S
+  if (/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i.test(str)) {
+    const match = str.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+    if (match) {
+      const hours = parseInt(match[1] || '0', 10);
+      const mins = parseInt(match[2] || '0', 10);
+      const secs = parseInt(match[3] || '0', 10);
+      return hours * 3600 + mins * 60 + secs;
+    }
+  }
+
+  // HH:MM:SS or MM:SS
+  if (/^\d+(?::\d+)+$/.test(str)) {
+    const parts = str.split(':').map((p) => parseInt(p, 10));
+    if (parts.some(isNaN)) return null;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+  }
+
+  const num = parseFloat(str);
+  if (isNaN(num) || !isFinite(num) || num < 0) return null;
   return Math.floor(num);
 }
 
 function formatDuration(seconds) {
   const sec = normalizeDurationSeconds(seconds);
-  if (sec === null || sec < 0) return '00:00';
+  if (sec === null || sec < 0) return '0:00';
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = sec % 60;
-  const padM = String(m).padStart(2, '0');
   const padS = String(s).padStart(2, '0');
   if (h > 0) {
+    const padM = String(m).padStart(2, '0');
     return `${h}:${padM}:${padS}`;
   }
-  return `${padM}:${padS}`;
+  return `${m}:${padS}`;
 }
 
 function formatViews(views) {
-  if (views === null || views === undefined) return '';
+  if (views === null || views === undefined || views === '') return '';
+  if (typeof views === 'string') {
+    const trimmed = cleanText(views);
+    if (/^\d[\d,.]*\s*(?:K|M|B)?\s*views?$/i.test(trimmed)) {
+      return trimmed.replace(/\s+/g, ' ');
+    }
+  }
   const num = typeof views === 'number' ? views : parseInt(String(views).replace(/[^0-9]/g, ''), 10);
-  if (isNaN(num)) return '';
+  if (isNaN(num) || num < 0) return '';
   if (num === 0) return '0 views';
   if (num === 1) return '1 view';
   if (num >= 1000000000) return (num / 1000000000).toFixed(1).replace(/\.0$/, '') + 'B views';
@@ -237,7 +311,7 @@ function formatViews(views) {
 function formatUploadedDate(dateVal) {
   if (!dateVal || dateVal === -1) return '';
   if (typeof dateVal === 'string') {
-    const trimmed = dateVal.trim();
+    const trimmed = cleanText(dateVal);
     if (trimmed.toLowerCase().includes('ago') || trimmed.toLowerCase() === 'live') return trimmed;
     const parsed = Date.parse(trimmed);
     if (!isNaN(parsed) && parsed > 0) {
@@ -386,6 +460,8 @@ module.exports = {
   formatDuration,
   formatViews,
   formatUploadedDate,
+  cleanText,
+  decodeHtmlEntities,
   sendResponse,
   sendError,
   parseQueryParams

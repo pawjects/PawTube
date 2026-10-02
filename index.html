@@ -203,9 +203,19 @@
             <div class="player-controls-row">
               <!-- Left Controls -->
               <div class="player-controls-left">
+                <!-- Previous Button -->
+                <button class="player-btn" id="btn-prev-track" title="Previous (Shift+P)" aria-label="Previous Video" style="opacity:0.4;pointer-events:none;">
+                  <span class="material-symbols-rounded">skip_previous</span>
+                </button>
+
                 <!-- Play/Pause -->
                 <button class="player-btn" id="btn-play-pause" title="Play/Pause (Space)" aria-label="Play or Pause">
                   <span class="material-symbols-rounded" id="icon-play-pause">pause</span>
+                </button>
+
+                <!-- Next Button -->
+                <button class="player-btn" id="btn-next-track" title="Next (Shift+N)" aria-label="Next Video" style="opacity:0.4;pointer-events:none;">
+                  <span class="material-symbols-rounded">skip_next</span>
                 </button>
 
                 <!-- Volume Group -->
@@ -281,8 +291,14 @@
           <div class="mini-player-channel" id="mini-player-channel">Channel</div>
         </div>
         <div class="mini-player-actions">
+          <button class="icon-btn mini-player-btn" id="mini-player-prev-btn" type="button" aria-label="Previous Video" title="Previous (Shift+P)" style="opacity:0.4;pointer-events:none;">
+            <span class="material-symbols-rounded" style="font-size:20px;">skip_previous</span>
+          </button>
           <button class="icon-btn mini-player-btn" id="mini-player-play-btn" type="button" aria-label="Play or Pause">
             <span class="material-symbols-rounded" id="mini-player-play-icon">pause</span>
+          </button>
+          <button class="icon-btn mini-player-btn" id="mini-player-next-btn" type="button" aria-label="Next Video" title="Next (Shift+N)" style="opacity:0.4;pointer-events:none;">
+            <span class="material-symbols-rounded" style="font-size:20px;">skip_next</span>
           </button>
           <button class="icon-btn mini-player-btn" id="mini-player-close-btn" type="button" aria-label="Close Mini Player">
             <span class="material-symbols-rounded">close</span>

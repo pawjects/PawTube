@@ -7,7 +7,7 @@
 import { buildNoCookieEmbedUrl } from './embed.js';
 import { extractVideoId } from './videoId.js';
 import { addToHistory, updateHistoryProgress, markVideoCompleted } from '../storage/history/historyStorage.js';
-import { formatDuration } from '../api/normalization/mediaModels.js';
+import { formatDuration, cleanText } from '../api/normalization/mediaModels.js';
 import { getPreferences } from '../storage/preferences/preferencesStorage.js';
 
 function formatRemaining(totalSec) {
@@ -38,7 +38,11 @@ export class VideoPlayerController {
       captionsEnabled: false,
       mode: 'hidden', // 'watch' | 'mini' | 'hidden'
       isFullscreen: false,
-      isTheatre: false
+      isTheatre: false,
+      queue: [],
+      queueIndex: 0,
+      playlistId: null,
+      playlistTitle: ''
     };
 
     this.isDraggingSeek = false;
@@ -56,8 +60,23 @@ export class VideoPlayerController {
     this.iframe = document.getElementById('pawtube-iframe');
     if (!this.host || !this.iframe) return;
 
+    // Restore persisted queue from sessionStorage if present
+    try {
+      const savedQueueRaw = sessionStorage.getItem('pawtube_queue');
+      if (savedQueueRaw) {
+        const parsed = JSON.parse(savedQueueRaw);
+        if (Array.isArray(parsed.queue) && parsed.queue.length > 0) {
+          this.state.queue = parsed.queue;
+          this.state.queueIndex = typeof parsed.queueIndex === 'number' ? parsed.queueIndex : 0;
+          this.state.playlistId = parsed.playlistId || null;
+          this.state.playlistTitle = parsed.playlistTitle || '';
+        }
+      }
+    } catch {}
+
     this.bindPlayerEvents();
     this.startTicker();
+    this.syncQueueNavUI();
 
     this.iframe.addEventListener('load', () => {
       this.sendListeningHandshake();
@@ -302,13 +321,171 @@ export class VideoPlayerController {
 
   expandToWatch() {
     if (!this.state.currentVideoId) return;
-    window.location.hash = `#/watch?v=${encodeURIComponent(this.state.currentVideoId)}`;
+    const listParam = this.state.playlistId ? `&list=${encodeURIComponent(this.state.playlistId)}` : '';
+    window.location.hash = `#/watch?v=${encodeURIComponent(this.state.currentVideoId)}${listParam}`;
+  }
+
+  setQueue(videos, startIndex = 0, playlistId = null, playlistTitle = '') {
+    if (!Array.isArray(videos) || videos.length === 0) return;
+
+    const validVideos = [];
+    const seen = new Set();
+    for (const v of videos) {
+      if (!v) continue;
+      const vid = extractVideoId(v.id || v.videoId || v.url);
+      if (vid && !seen.has(vid)) {
+        seen.add(vid);
+        validVideos.push({
+          ...v,
+          id: vid,
+          title: cleanText(v.title || v.name, 'YouTube Video'),
+          channel: cleanText(v.channel || v.author || v.uploader, 'YouTube Channel'),
+          author: cleanText(v.author || v.channel || v.uploader, 'YouTube Channel')
+        });
+      }
+    }
+
+    if (validVideos.length === 0) return;
+
+    this.state.queue = validVideos;
+    this.state.queueIndex = Math.max(0, Math.min(startIndex, validVideos.length - 1));
+    this.state.playlistId = playlistId;
+    this.state.playlistTitle = playlistTitle;
+
+    try {
+      sessionStorage.setItem('pawtube_queue', JSON.stringify({
+        queue: validVideos,
+        queueIndex: this.state.queueIndex,
+        playlistId,
+        playlistTitle
+      }));
+    } catch {}
+
+    this.syncQueueNavUI();
+    this.loadQueueTrack(this.state.queueIndex);
+
+    window.dispatchEvent(new CustomEvent('pawtube:queueChange', {
+      detail: {
+        queue: this.state.queue,
+        queueIndex: this.state.queueIndex,
+        playlistId,
+        currentVideo: this.state.queue[this.state.queueIndex]
+      }
+    }));
+  }
+
+  loadQueueTrack(index) {
+    if (!this.state.queue || this.state.queue.length === 0) return;
+    const idx = Math.max(0, Math.min(index, this.state.queue.length - 1));
+    this.state.queueIndex = idx;
+    const track = this.state.queue[idx];
+    if (!track || !track.id) return;
+
+    try {
+      sessionStorage.setItem('pawtube_queue', JSON.stringify({
+        queue: this.state.queue,
+        queueIndex: this.state.queueIndex,
+        playlistId: this.state.playlistId,
+        playlistTitle: this.state.playlistTitle
+      }));
+    } catch {}
+
+    this.syncQueueNavUI();
+
+    if (this.state.mode === 'watch') {
+      const currentUrlVideoId = extractVideoId(window.location.href);
+      if (currentUrlVideoId !== track.id) {
+        const listParam = this.state.playlistId ? `&list=${encodeURIComponent(this.state.playlistId)}` : '';
+        window.location.hash = `#/watch?v=${encodeURIComponent(track.id)}${listParam}`;
+        return;
+      }
+    }
+
+    if (this.state.mode === 'hidden') {
+      this.setMode('mini');
+    }
+
+    const cleanId = track.id;
+    this.state.currentVideoId = cleanId;
+    this.state.currentTime = 0;
+    this.state.duration = track.durationSeconds || track.duration || 0;
+    this.updateMetadata(track);
+
+    this.iframe.src = buildNoCookieEmbedUrl(cleanId, {
+      autoplay: 1,
+      enablejsapi: 1,
+      playsinline: 1,
+      controls: 0
+    });
+
+    this.setPlayingState(true);
+    this.setBufferingState(true);
+    this.sendListeningHandshake();
+
+    window.dispatchEvent(new CustomEvent('pawtube:videoChange', {
+      detail: { videoId: cleanId, metadata: track }
+    }));
+  }
+
+  playNext() {
+    if (!this.state.queue || this.state.queue.length === 0) return;
+    if (this.state.queueIndex < this.state.queue.length - 1) {
+      this.loadQueueTrack(this.state.queueIndex + 1);
+    }
+  }
+
+  playPrevious() {
+    if (!this.state.queue || this.state.queue.length === 0) return;
+    if (this.state.currentTime > 3) {
+      this.seekTo(0);
+      return;
+    }
+    if (this.state.queueIndex > 0) {
+      this.loadQueueTrack(this.state.queueIndex - 1);
+    } else {
+      this.seekTo(0);
+    }
+  }
+
+  syncQueueNavUI() {
+    if (!this.host) return;
+    const hasQueue = Array.isArray(this.state.queue) && this.state.queue.length > 1;
+    const hasPrev = hasQueue && (this.state.queueIndex > 0 || this.state.currentTime > 3);
+    const hasNext = hasQueue && this.state.queueIndex < this.state.queue.length - 1;
+
+    const fullPrev = this.host.querySelector('#btn-prev-track');
+    const fullNext = this.host.querySelector('#btn-next-track');
+    if (fullPrev) {
+      fullPrev.style.opacity = hasPrev ? '1' : '0.35';
+      fullPrev.style.pointerEvents = hasPrev ? 'auto' : 'none';
+      fullPrev.setAttribute('aria-disabled', !hasPrev);
+    }
+    if (fullNext) {
+      fullNext.style.opacity = hasNext ? '1' : '0.35';
+      fullNext.style.pointerEvents = hasNext ? 'auto' : 'none';
+      fullNext.setAttribute('aria-disabled', !hasNext);
+    }
+
+    const miniPrev = this.host.querySelector('#mini-player-prev-btn');
+    const miniNext = this.host.querySelector('#mini-player-next-btn');
+    if (miniPrev) {
+      miniPrev.style.opacity = hasPrev ? '1' : '0.35';
+      miniPrev.style.pointerEvents = hasPrev ? 'auto' : 'none';
+      miniPrev.setAttribute('aria-disabled', !hasPrev);
+    }
+    if (miniNext) {
+      miniNext.style.opacity = hasNext ? '1' : '0.35';
+      miniNext.style.pointerEvents = hasNext ? 'auto' : 'none';
+      miniNext.setAttribute('aria-disabled', !hasNext);
+    }
   }
 
   bindPlayerEvents() {
     if (!this.host) return;
 
     const playPauseBtn = this.host.querySelector('#btn-play-pause');
+    const prevBtn = this.host.querySelector('#btn-prev-track');
+    const nextBtn = this.host.querySelector('#btn-next-track');
     const centerPlay = this.host.querySelector('#player-center-play');
     const clickLayer = this.host.querySelector('#player-click-layer');
     const replayBtn = this.host.querySelector('#btn-replay-10');
@@ -327,6 +504,8 @@ export class VideoPlayerController {
 
     // Mini-player elements
     const miniPlayBtn = this.host.querySelector('#mini-player-play-btn');
+    const miniPrevBtn = this.host.querySelector('#mini-player-prev-btn');
+    const miniNextBtn = this.host.querySelector('#mini-player-next-btn');
     const miniCloseBtn = this.host.querySelector('#mini-player-close-btn');
     const miniExpandTap = this.host.querySelector('#mini-player-expand-tap');
     const playerMediaBox = this.host.querySelector('#player-media-box');
@@ -339,6 +518,38 @@ export class VideoPlayerController {
 
     if (playPauseBtn) playPauseBtn.onclick = handleTogglePlay;
     if (centerPlay) centerPlay.onclick = handleTogglePlay;
+
+    // Prev / Next track actions
+    if (prevBtn) {
+      prevBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.playPrevious();
+      };
+    }
+    if (nextBtn) {
+      nextBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.playNext();
+      };
+    }
+    if (miniPrevBtn) {
+      miniPrevBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.playPrevious();
+      };
+      miniPrevBtn.ontouchstart = (e) => e?.stopPropagation();
+      miniPrevBtn.onpointerdown = (e) => e?.stopPropagation();
+    }
+    if (miniNextBtn) {
+      miniNextBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.playNext();
+      };
+      miniNextBtn.ontouchstart = (e) => e?.stopPropagation();
+      miniNextBtn.onpointerdown = (e) => e?.stopPropagation();
+    }
 
     // Mini player actions with strict stopPropagation to prevent unintended expansion
     if (miniPlayBtn) {
@@ -649,6 +860,12 @@ export class VideoPlayerController {
       } else if (e.key === 'i' || e.key === 'I') {
         e.preventDefault();
         pipBtn?.click();
+      } else if (e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+        e.preventDefault();
+        this.playNext();
+      } else if (e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        e.preventDefault();
+        this.playPrevious();
       }
     });
   }
@@ -923,12 +1140,22 @@ export class VideoPlayerController {
     if (this.state.currentVideoId) {
       markVideoCompleted(this.state.currentVideoId);
     }
-    this.seekTo(0);
+    if (Array.isArray(this.state.queue) && this.state.queue.length > 0 && this.state.queueIndex < this.state.queue.length - 1) {
+      this.playNext();
+    } else {
+      this.seekTo(0);
+    }
   }
 
   updateMetadata(metadata) {
     if (!metadata) return;
-    this.state.currentMetadata = { ...this.state.currentMetadata, ...metadata };
+    const cleanedMeta = {
+      ...metadata,
+      title: cleanText(metadata.title, 'YouTube Video'),
+      channel: cleanText(metadata.channel || metadata.author, 'YouTube Channel'),
+      author: cleanText(metadata.author || metadata.channel, 'YouTube Channel')
+    };
+    this.state.currentMetadata = { ...this.state.currentMetadata, ...cleanedMeta };
     const dur = (metadata.durationSeconds !== undefined && metadata.durationSeconds !== null)
       ? metadata.durationSeconds
       : metadata.duration;
@@ -946,6 +1173,7 @@ export class VideoPlayerController {
       }
     }
     this.syncMiniPlayerUI();
+    this.syncQueueNavUI();
   }
 
   syncMiniPlayerUI() {

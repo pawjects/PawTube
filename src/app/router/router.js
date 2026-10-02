@@ -5,6 +5,7 @@
  */
 
 import { extractVideoId } from '../../player/videoId.js';
+import { extractPlaylistId } from '../../utils/playlistId.js';
 import { playerController } from '../../player/player.js';
 import { bottomNavManager } from '../../components/nav/bottomNavManager.js';
 import { renderHomePage } from '../../pages/Home/homePage.js';
@@ -14,6 +15,7 @@ import { renderYouPage } from '../../pages/You/youPage.js';
 import { renderWatchPage } from '../../pages/Watch/watchPage.js';
 import { renderSearchPage } from '../../pages/Search/searchPage.js';
 import { renderChannelPage } from '../../pages/Channel/channelPage.js';
+import { renderPlaylistPage } from '../../pages/Playlist/playlistPage.js';
 
 export class Router {
   constructor(mountElement) {
@@ -33,12 +35,23 @@ export class Router {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
 
-    // If there is a hash route like #/watch?v=..., #/channel/..., or #/shorts
+    // If there is a hash route like #/watch?v=..., #/channel/..., #/playlist..., or #/shorts
     if (hash.startsWith('#')) {
       const hashClean = hash.slice(1);
       const [rawPath, qs] = hashClean.split('?');
       const params = new URLSearchParams(qs || '');
       const path = rawPath || '/home';
+
+      // Check for /playlist in hash e.g. #/playlist?list=... or #/playlist/PL... or #/pawtube/playlist/PL...
+      if (
+        path.startsWith('/playlist') ||
+        path.startsWith('/playlists') ||
+        path.startsWith('/pawtube/playlist') ||
+        params.has('list')
+      ) {
+        const playlistId = params.get('list') || extractPlaylistId(hashClean);
+        return { path: '/playlist', params, playlistId, raw: hashClean };
+      }
 
       // Check for /channel/:id in hash
       if (path.startsWith('/channel/')) {
@@ -49,7 +62,14 @@ export class Router {
       return { path, params, raw: hashClean };
     }
 
-    // Direct pathname support (e.g. /watch?v=... or /channel/CHANNEL_ID)
+    // Direct pathname support (e.g. /playlist/ID, /pawtube/playlist/ID, /playlist?list=ID)
+    if (pathname.includes('/playlist') || pathname.includes('/playlists')) {
+      const params = new URLSearchParams(search);
+      const playlistId = params.get('list') || extractPlaylistId(pathname + search);
+      return { path: '/playlist', params, playlistId };
+    }
+
+    // Direct pathname support for channel (e.g. /channel/CHANNEL_ID)
     if (pathname.startsWith('/channel/')) {
       const channelId = decodeURIComponent(pathname.replace(/^\/channel\//, ''));
       const params = new URLSearchParams(search);
@@ -68,11 +88,18 @@ export class Router {
 
     if (pathname.length > 1 && pathname !== '/index.html') {
       const params = new URLSearchParams(search);
+      if (params.has('list')) {
+        return { path: '/playlist', params, playlistId: params.get('list') };
+      }
       return { path: pathname, params };
     }
 
     // Fallback default
     const params = new URLSearchParams(search);
+    const list = params.get('list');
+    if (list) {
+      return { path: '/playlist', params, playlistId: list };
+    }
     const v = params.get('v');
     if (v) {
       return { path: '/watch', params, videoId: v };
@@ -84,12 +111,11 @@ export class Router {
   handleRoute() {
     const loc = this.parseLocation();
     const path = loc.path.toLowerCase();
-    const previousRoute = this.currentRoute;
     this.currentRoute = path;
 
     // Check direct video playback in any route format
     const possibleVideoId = extractVideoId(window.location.href);
-    const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you', '/channel', '/search'].some(p => path.startsWith(p)));
+    const isNavigatingToWatch = path.includes('watch') || (possibleVideoId && !['/home', '/shorts', '/library', '/you', '/channel', '/search', '/playlist', '/pawtube'].some(p => path.startsWith(p)));
 
     // Handle mini-player transitions: preserve playback when navigating away from watch
     if (!isNavigatingToWatch && playerController.state.mode === 'watch' && playerController.state.currentVideoId) {
@@ -102,6 +128,14 @@ export class Router {
       const startTime = parseFloat(rawTime) || 0;
       this.updateNavigationUI('/watch');
       renderWatchPage(this.mount, videoId, startTime);
+      window.scrollTo(0, 0);
+      return;
+    }
+
+    if (path.includes('playlist') || loc.playlistId) {
+      const playlistId = loc.playlistId || loc.params.get('list') || extractPlaylistId(window.location.href);
+      this.updateNavigationUI('/playlist');
+      renderPlaylistPage(this.mount, playlistId);
       window.scrollTo(0, 0);
       return;
     }
